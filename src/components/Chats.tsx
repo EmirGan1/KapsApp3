@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { Socket } from "socket.io-client";
 import { Friend, Message, MediaModalData } from "../types";
-import { Send, Image as ImageIcon, Mic, Users, Plus, X, Reply, Smile, FileText, Download, Paperclip, Maximize2, Trash2, Loader2 } from "lucide-react";
+import { Send, Image as ImageIcon, Mic, Users, Plus, X, Reply, Smile, FileText, Download, Paperclip, Maximize2, Trash2, Loader2, Phone, PhoneCall } from "lucide-react";
 import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
 import { getApiUrl } from "../utils/api";
 import { compressImage } from "../utils/imageCompressor";
+import { useCall } from "../context/CallContext";
 
 type Group = {
   id: number;
@@ -41,6 +42,8 @@ export default function Chats({
   const [activeTab, setActiveTab] = useState<"friends" | "groups">("friends");
   const [activeChat, setActiveChat] = useState<Friend | Group | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+
+  const { startCall, callState, currentCall, setIsMinimized } = useCall();
 
   const activeChatRef = useRef<Friend | Group | null>(null);
   const activeTabRef = useRef<"friends" | "groups">("friends");
@@ -792,6 +795,34 @@ export default function Chats({
                   <span className="text-xs text-slate-500 dark:text-slate-400">{(activeChat as Group).members.length} Üye</span>
                 )}
               </div>
+
+              {/* Sesli Arama (1-on-1 Call) Button in DM */}
+              {activeTab === "friends" && (
+                <div className="ml-auto flex items-center gap-2">
+                  {currentCall && currentCall.peer.peerId === activeChat.id ? (
+                    <button
+                      onClick={() => setIsMinimized(false)}
+                      className="flex items-center gap-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-500 font-bold px-4 py-2 rounded-xl border border-emerald-500/30 shadow-md shadow-emerald-500/5 animate-pulse transition-all duration-150 active:scale-95"
+                    >
+                      <PhoneCall size={18} className="animate-bounce" />
+                      <span className="font-semibold text-xs">Aramayı Aç</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => startCall(activeChat.id)}
+                      disabled={callState !== 'idle'}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold shadow-md transition-all duration-150 active:scale-95 group ${
+                        callState !== 'idle'
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed shadow-none'
+                          : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/10'
+                      }`}
+                    >
+                      <Phone size={16} className="text-emerald-400 group-hover:scale-110 transition-transform" />
+                      <span className="font-semibold text-xs">Ara</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Messages */}

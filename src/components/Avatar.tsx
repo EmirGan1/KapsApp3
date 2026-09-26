@@ -17,6 +17,8 @@ export default function Avatar({ url, name, color, size = 10, className = "" }: 
         src={url} 
         alt={name || "avatar"} 
         referrerPolicy="no-referrer"
+        loading="lazy"
+        decoding="async"
         onError={() => setHasError(true)}
         className={`rounded-full object-cover ${className}`} 
         style={{ width: `${size * 0.25}rem`, height: `${size * 0.25}rem` }}

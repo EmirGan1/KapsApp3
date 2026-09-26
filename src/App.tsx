@@ -18,6 +18,9 @@ import DeviceBanScreen from "./components/DeviceBanScreen";
 import Agenda from "./components/Agenda";
 import AdminPanel from "./components/AdminPanel";
 import SubjectsDirectory from "./components/SubjectsDirectory";
+import { CallProvider } from "./context/CallContext";
+import IncomingCallNotification from "./components/IncomingCallNotification";
+import ActiveCallPanel from "./components/ActiveCallPanel";
 import { getSocketUrl, getApiUrl } from "./utils/api";
 import { getCachedHardwareFingerprint, getHardwareFingerprint } from "./utils/deviceFingerprint";
 
@@ -518,7 +521,22 @@ export default function App() {
   const isEmirgan = (username || "").trim().toLowerCase() === "emirgan";
 
   return (
-    <div className="flex flex-col md:flex-row h-[100dvh] w-full max-w-[100vw] bg-white dark:bg-slate-900 md:bg-slate-50 md:dark:bg-slate-950 overflow-hidden font-sans transition-colors duration-200">
+    <CallProvider
+      socket={socket}
+      currentUserId={currentUserId}
+      onOpenChatWithUser={(targetId) => {
+        setTargetChatUserId(targetId);
+        setActiveTab("chats");
+      }}
+      onShowToast={(msg, type) => {
+        addToast({
+          type: type === "error" ? "system_error" : "system_info",
+          title: type === "error" ? "Hata" : "Sistem",
+          text: msg
+        });
+      }}
+    >
+      <div className="flex flex-col md:flex-row h-[100dvh] w-full max-w-[100vw] bg-white dark:bg-slate-900 md:bg-slate-50 md:dark:bg-slate-950 overflow-hidden font-sans transition-colors duration-200">
       {/* Semantic Top Heading for Search Crawlers & Accessibility */}
       <h1 className="sr-only">KapsApp - Canlı Harita ve Çevrimiçi Oyun Platformu</h1>
 
@@ -779,7 +797,12 @@ export default function App() {
           <MobileNavItem icon={<UserCircle2 size={22} />} active={activeTab === 'profile'} onClick={() => handleTabChange('profile')} />
         </nav>
       </div>
+
+      {/* Global Birebir Sesli Arama Modülü Katmanları */}
+      <IncomingCallNotification />
+      <ActiveCallPanel />
     </div>
+    </CallProvider>
   );
 }
 

@@ -2819,6 +2819,25 @@ async function startServer() {
     createdAt: string;
   }
 
+  interface DirectCallSession {
+    callId: string;
+    callerId: number;
+    callerUsername: string;
+    callerAvatar?: string | null;
+    callerColor?: string;
+    receiverId: number;
+    receiverUsername: string;
+    receiverAvatar?: string | null;
+    receiverColor?: string;
+    status: 'ringing' | 'connected';
+    startedAt: number;
+    connectedAt?: number;
+    timeoutTimer?: NodeJS.Timeout | null;
+  }
+
+  const directCalls = new Map<string, DirectCallSession>();
+  const userActiveCallId = new Map<number, string>(); // userId -> callId
+
   const voiceRooms = new Map<string, ServerVoiceRoom>();
 
   const getSanitizedVoiceRoom = (room: ServerVoiceRoom) => ({
@@ -6939,6 +6958,276 @@ async function startServer() {
       if (data) data.candidate = null;
     });
 
+    // ----------------------------------------------------
+    // --- 1-ON-1 DIRECT VOICE CALL (DM BİREBİR SESLİ ARAMA) ---
+    // ----------------------------------------------------
+    socket.on("direct_call_start", async (data: { targetUserId: number }, cb?: (res: any) => void) => {
+      const callerId = userIdNum;
+      const receiverId = Number(data?.targetUserId);
+
+      if (!receiverId || callerId === receiverId) {
+        return cb && cb({ error: "Geçersiz arama hedefi." });
+      }
+
+      // Check if caller already in call
+      if (userActiveCallId.has(callerId)) {
+        return cb && cb({ error: "Zaten aktif bir görüşmeniz bulunuyor." });
+      }
+
+      // Check if receiver is online
+      const receiverSocketId = onlineUsers.get(receiverId);
+      if (!receiverSocketId) {
+        return cb && cb({ error: "Kullanıcı şu an çevrimdışı." });
+      }
+
+      // Check if receiver is already in a call
+      if (userActiveCallId.has(receiverId)) {
+        return cb && cb({ error: "Kullanıcı şu an başka bir görüşmede." });
+      }
+
+      try {
+        const receiverUser = await getUser(receiverId);
+        if (!receiverUser) {
+          return cb && cb({ error: "Kullanıcı bulunamadı." });
+        }
+
+        const callId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        
+        const session: DirectCallSession = {
+          callId,
+          callerId,
+          callerUsername: user.username,
+          callerAvatar: user.avatar,
+          callerColor: user.color,
+          receiverId,
+          receiverUsername: receiverUser.username,
+          receiverAvatar: receiverUser.avatar,
+          receiverColor: receiverUser.color,
+          status: 'ringing',
+          startedAt: Date.now()
+        };
+
+        // Create timeout for 30s auto-hangup
+        const timeoutTimer = setTimeout(() => {
+          const s = directCalls.get(callId);
+          if (s && s.status === 'ringing') {
+            // Auto timeout hangup
+            directCalls.delete(callId);
+            userActiveCallId.delete(callerId);
+            userActiveCallId.delete(receiverId);
+
+            // Notify both of timeout
+            io.to(socket.id).emit("direct_call_timeout", { callId });
+            const rSocket = onlineUsers.get(receiverId);
+            if (rSocket) {
+              io.to(rSocket).emit("direct_call_timeout", { callId });
+            }
+
+            // Write missed call notification / system message in direct messages
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+            const sysMsgContent = `📞 Cevapsız Sesli Arama • ${timeStr}`;
+            
+            client.execute({
+              sql: "INSERT INTO messages (sender_id, receiver_id, content, created_at, read_status) VALUES (?, ?, ?, ?, ?)",
+              args: [callerId, receiverId, sysMsgContent, now.toISOString(), 0]
+            }).then((res) => {
+              const msgId = Number(res.lastInsertRowid);
+              const payload = {
+                id: msgId,
+                sender: callerId,
+                receiver: receiverId,
+                type: "text",
+                content: sysMsgContent,
+                reactions: "{}",
+                created_at: now.toISOString(),
+                sender_name: user.username,
+                sender_avatar: user.avatar,
+                sender_color: user.color
+              };
+              socket.emit("receive_direct_message", payload);
+              if (rSocket) {
+                io.to(rSocket).emit("receive_direct_message", payload);
+              }
+            }).catch(() => {});
+          }
+        }, 30000);
+
+        session.timeoutTimer = timeoutTimer;
+
+        directCalls.set(callId, session);
+        userActiveCallId.set(callerId, callId);
+        userActiveCallId.set(receiverId, callId);
+
+        // Emit direct_call_incoming to the receiver
+        io.to(receiverSocketId).emit("direct_call_incoming", {
+          callId,
+          callerId,
+          callerUsername: user.username,
+          callerAvatar: user.avatar,
+          callerColor: user.color
+        });
+
+        if (cb) {
+          cb({
+            success: true,
+            callId,
+            callerId,
+            receiverId,
+            receiverUsername: receiverUser.username,
+            receiverAvatar: receiverUser.avatar,
+            receiverColor: receiverUser.color,
+            status: 'ringing'
+          });
+        }
+      } catch (err) {
+        console.error("Error starting direct call:", err);
+        if (cb) cb({ error: "Arama başlatılamadı." });
+      }
+    });
+
+    socket.on("direct_call_accept", (data: { callId: string }, cb?: (res: any) => void) => {
+      const session = directCalls.get(data?.callId);
+      if (!session) {
+        return cb && cb({ error: "Arama bulunamadı veya sonlandırıldı." });
+      }
+
+      if (session.receiverId !== userIdNum) {
+        return cb && cb({ error: "Bu aramayı kabul etme yetkiniz yok." });
+      }
+
+      // Stop ringing timeout
+      if (session.timeoutTimer) {
+        clearTimeout(session.timeoutTimer);
+        session.timeoutTimer = null;
+      }
+
+      session.status = 'connected';
+      session.connectedAt = Date.now();
+
+      // Notify caller and receiver of acceptance
+      const callerSocketId = onlineUsers.get(session.callerId);
+      const receiverSocketId = onlineUsers.get(session.receiverId);
+
+      if (callerSocketId) {
+        io.to(callerSocketId).emit("direct_call_accepted", {
+          callId: session.callId,
+          peerId: session.receiverId,
+          peerUsername: session.receiverUsername,
+          peerAvatar: session.receiverAvatar,
+          peerColor: session.receiverColor
+        });
+      }
+
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit("direct_call_accepted", {
+          callId: session.callId,
+          peerId: session.callerId,
+          peerUsername: session.callerUsername,
+          peerAvatar: session.callerAvatar,
+          peerColor: session.callerColor
+        });
+      }
+
+      if (cb) cb({ success: true });
+    });
+
+    socket.on("direct_call_reject", (data: { callId: string }) => {
+      const session = directCalls.get(data?.callId);
+      if (!session) return;
+
+      if (session.receiverId !== userIdNum) return;
+
+      if (session.timeoutTimer) {
+        clearTimeout(session.timeoutTimer);
+        session.timeoutTimer = null;
+      }
+
+      directCalls.delete(session.callId);
+      userActiveCallId.delete(session.callerId);
+      userActiveCallId.delete(session.receiverId);
+
+      // Notify caller that call was rejected
+      const callerSocketId = onlineUsers.get(session.callerId);
+      if (callerSocketId) {
+        io.to(callerSocketId).emit("direct_call_rejected", {
+          callId: session.callId,
+          reason: "dm_call_rejected"
+        });
+      }
+    });
+
+    socket.on("direct_call_end", (data: { callId: string }) => {
+      const session = directCalls.get(data?.callId);
+      if (!session) return;
+
+      if (session.callerId !== userIdNum && session.receiverId !== userIdNum) return;
+
+      if (session.timeoutTimer) {
+        clearTimeout(session.timeoutTimer);
+        session.timeoutTimer = null;
+      }
+
+      directCalls.delete(session.callId);
+      userActiveCallId.delete(session.callerId);
+      userActiveCallId.delete(session.receiverId);
+
+      const targetId = session.callerId === userIdNum ? session.receiverId : session.callerId;
+      const targetSocketId = onlineUsers.get(targetId);
+
+      if (targetSocketId) {
+        io.to(targetSocketId).emit("direct_call_ended", { callId: session.callId });
+      }
+    });
+
+    socket.on("direct_call_signal_offer", (data: { callId: string; offer: any }) => {
+      const session = directCalls.get(data?.callId);
+      if (!session) return;
+
+      const targetId = session.callerId === userIdNum ? session.receiverId : session.callerId;
+      const targetSocketId = onlineUsers.get(targetId);
+
+      if (targetSocketId) {
+        io.to(targetSocketId).emit("direct_call_signal_offer", {
+          callId: session.callId,
+          offer: data.offer
+        });
+      }
+      if (data) data.offer = null;
+    });
+
+    socket.on("direct_call_signal_answer", (data: { callId: string; answer: any }) => {
+      const session = directCalls.get(data?.callId);
+      if (!session) return;
+
+      const targetId = session.callerId === userIdNum ? session.receiverId : session.callerId;
+      const targetSocketId = onlineUsers.get(targetId);
+
+      if (targetSocketId) {
+        io.to(targetSocketId).emit("direct_call_signal_answer", {
+          callId: session.callId,
+          answer: data.answer
+        });
+      }
+      if (data) data.answer = null;
+    });
+
+    socket.on("direct_call_signal_ice", (data: { callId: string; candidate: any }) => {
+      const session = directCalls.get(data?.callId);
+      if (!session) return;
+
+      const targetId = session.callerId === userIdNum ? session.receiverId : session.callerId;
+      const targetSocketId = onlineUsers.get(targetId);
+
+      if (targetSocketId) {
+        io.to(targetSocketId).emit("direct_call_signal_ice", {
+          callId: session.callId,
+          candidate: data.candidate
+        });
+      }
+      if (data) data.candidate = null;
+    });
+
     // --- Draw & Guess (Çiz & Tahmin Et) Socket Handlers ---
     socket.on("get_drawguess_rooms", (cb?: (rooms: any[]) => void) => {
       const list = getSanitizedDrawGuessRoomsList();
@@ -8087,6 +8376,26 @@ async function startServer() {
       try {
         (socket as any).leaveAll?.();
       } catch (e) {}
+
+      // Direct 1-on-1 Voice Call teardown on disconnect
+      const activeCallId = userActiveCallId.get(userIdNum);
+      if (activeCallId) {
+        const session = directCalls.get(activeCallId);
+        if (session) {
+          if (session.timeoutTimer) {
+            clearTimeout(session.timeoutTimer);
+          }
+          directCalls.delete(activeCallId);
+          userActiveCallId.delete(session.callerId);
+          userActiveCallId.delete(session.receiverId);
+
+          const peerId = session.callerId === userIdNum ? session.receiverId : session.callerId;
+          const peerSocketId = onlineUsers.get(peerId);
+          if (peerSocketId) {
+            io.to(peerSocketId).emit("direct_call_ended", { callId: activeCallId });
+          }
+        }
+      }
 
       const drawGuessRoomId = socket.data.currentDrawGuessRoom;
       if (drawGuessRoomId) {

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { Socket } from "socket.io-client";
 import { User, Friend } from "../types";
-import { Search, UserPlus, Check, Clock, UserRound, UserX, AlertTriangle, Shield, Globe } from "lucide-react";
+import { Search, UserPlus, Check, Clock, UserRound, UserX, AlertTriangle, Shield, Globe, Phone } from "lucide-react";
+import { useCall } from "../context/CallContext";
 
 export default function Friends({ 
   socket, 
@@ -14,6 +15,7 @@ export default function Friends({
   currentUsername: string,
   onUserClick?: (id: number) => void
 }) {
+  const { startCall, callState } = useCall();
   const [friends, setFriends] = useState<Friend[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<User[]>([]);
@@ -179,7 +181,7 @@ export default function Friends({
                   <div key={friend.id} className="flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-slate-100 hover:border-slate-300 transition-all">
                     <div className="flex items-center gap-4 cursor-pointer flex-1 min-w-0" onClick={() => onUserClick && onUserClick(friend.id)}>
                       <div className="relative shrink-0">
-                        {friend.avatar ? <img src={friend.avatar} className="w-12 h-12 rounded-full object-cover" /> : <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center"><UserRound size={24} className="text-slate-400" /></div>}
+                        {friend.avatar ? <img src={friend.avatar} loading="lazy" decoding="async" className="w-12 h-12 rounded-full object-cover" /> : <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center"><UserRound size={24} className="text-slate-400" /></div>}
                         {isOnline && <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full"></div>}
                       </div>
                       <div className="truncate">
@@ -193,18 +195,37 @@ export default function Friends({
                         )}
                       </div>
                     </div>
-                    {isEmirgan && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setUserToDelete({ id: friend.id, username: friend.username });
-                        }}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer shrink-0 ml-2"
-                        title="Kullanıcıyı Sil / Banla (Yönetici)"
-                      >
-                        <UserX size={18} />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0 ml-2">
+                      {isOnline && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startCall(friend.id);
+                          }}
+                          disabled={callState !== 'idle'}
+                          className={`p-2 rounded-xl transition-all cursor-pointer ${
+                            callState !== 'idle'
+                              ? 'text-slate-300 dark:text-slate-700 cursor-not-allowed'
+                              : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 active:scale-95'
+                          }`}
+                          title="Hemen Sesli Ara"
+                        >
+                          <Phone size={18} />
+                        </button>
+                      )}
+                      {isEmirgan && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUserToDelete({ id: friend.id, username: friend.username });
+                          }}
+                          className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer shrink-0"
+                          title="Kullanıcıyı Sil / Banla (Yönetici)"
+                        >
+                          <UserX size={18} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}
