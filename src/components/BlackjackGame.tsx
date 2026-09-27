@@ -204,8 +204,13 @@ export default function BlackjackGame({
     };
 
     const onTableClosed = (data?: { reason?: string }) => {
-      showBanner(data?.reason || 'Masa yönetici tarafından kapatıldı.', 'info', 4000);
+      showBanner(data?.reason || 'Masa kapatıldı, lobiye yönlendiriliyorsunuz.', 'info', 4000);
       setTimeout(() => onBackToHub(), 1500);
+    };
+
+    const onGameVoided = (data?: { reason?: string }) => {
+      showBanner(`⚠️ Tur İptal Edildi: ${data?.reason || 'Masadan bir oyuncu ayrıldı.'} Tüm bahisler hesaplara eksiksiz iade edildi.`, 'info', 5000);
+      setTimeout(() => onBackToHub(), 2500);
     };
 
     const isJoiningExisting = Boolean(tableId && !tableOptions);
@@ -214,6 +219,7 @@ export default function BlackjackGame({
     socket.on('blackjack_round_ended', onRoundEnded);
     socket.on('chips_updated', onChipsUpdated);
     socket.on('table_closed', onTableClosed);
+    socket.on('blackjack_game_voided', onGameVoided);
 
     if (isJoiningExisting) {
       socket.emit('join_table', { tableId: table.id, gameType: 'blackjack' });
@@ -248,8 +254,16 @@ export default function BlackjackGame({
       socket.off('blackjack_round_ended', onRoundEnded);
       socket.off('chips_updated', onChipsUpdated);
       socket.off('table_closed', onTableClosed);
+      socket.off('blackjack_game_voided', onGameVoided);
     };
   }, [socket, table.id, currentUserId, tableId, tableOptions]);
+
+  const handleLeaveTable = () => {
+    if (socket && socket.connected && table?.id) {
+      socket.emit('leave_blackjack', { tableId: table.id });
+    }
+    onBackToHub();
+  };
 
   // Sync state to socket
   const broadcastTable = useCallback((newTable: BlackjackState) => {
@@ -1320,7 +1334,7 @@ export default function BlackjackGame({
       <div className="px-3 sm:px-4 py-2.5 bg-slate-900/90 backdrop-blur-md border-b border-amber-500/20 flex items-center justify-between z-30 shrink-0">
         <div className="flex items-center gap-2 sm:gap-3">
           <button
-            onClick={onBackToHub}
+            onClick={handleLeaveTable}
             className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
           >
             <ArrowLeft size={16} />

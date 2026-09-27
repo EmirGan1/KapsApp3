@@ -1267,46 +1267,118 @@ export default function Okey101Board({
       <div className="flex-1 min-h-0 flex flex-col justify-between p-1.5 sm:p-2 md:p-3 max-w-6xl w-full mx-auto relative overflow-y-auto no-scrollbar">
         
         {/* Opponents Seats (Top, Left, Right) */}
-        <div className="flex justify-between items-center text-xs">
+        <div className="flex justify-between items-center text-xs gap-2">
           {/* Left Player */}
           {currentRoom.players[1] && (
             <div className={`p-2 rounded-xl backdrop-blur-sm border flex items-center gap-2 ${
-              currentRoom.currentTurn === 1 ? 'bg-amber-500/20 border-amber-400 ring-2 ring-amber-400/50' : 'bg-black/40 border-emerald-900/60'
+              currentRoom.currentTurn === 1 ? 'bg-amber-500/25 border-amber-400 ring-4 ring-amber-400/50 shadow-lg shadow-amber-950/50' : 'bg-black/40 border-emerald-900/60'
             }`}>
               <Avatar url={currentRoom.players[1].avatar} name={currentRoom.players[1].username} size={8} />
               <div>
-                <p className="font-bold text-slate-100">{currentRoom.players[1].username}</p>
-                <p className="text-[10px] text-emerald-300">{currentRoom.players[1].tileCount ?? currentRoom.players[1].hand?.length ?? 0} Taş • {currentRoom.players[1].hasOpened ? 'Açtı' : 'Açmadı'}</p>
+                <div className="flex items-center gap-1">
+                  <p className="font-bold text-slate-100">{currentRoom.players[1].username}</p>
+                  {currentRoom.currentTurn === 1 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black animate-pulse">
+                      Sıra ({currentRoom.turnTimeRemaining}s)
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10px] text-emerald-300">
+                  🀄 {currentRoom.players[1].tileCount ?? currentRoom.players[1].hand?.length ?? 0} Taş • {
+                    currentRoom.players[1].hasOpened
+                      ? (currentRoom.players[1].openedMode === 'double' ? `${currentRoom.players[1].openedMeldsCount} Çift` : `${currentRoom.players[1].openedScore}p`)
+                      : 'Açmadı'
+                  }
+                </p>
               </div>
+              {currentRoom.players[1].discardPile && currentRoom.players[1].discardPile.length > 0 && (
+                <div className="flex flex-col items-center ml-1 pl-1.5 border-l border-emerald-800/60 shrink-0">
+                  <span className="text-[8px] uppercase font-bold text-slate-400 mb-0.5">Yere Atılan</span>
+                  {renderTileComponent(currentRoom.players[1].discardPile[currentRoom.players[1].discardPile.length - 1], false, 'sm')}
+                </div>
+              )}
             </div>
           )}
 
           {/* Top Player (Facing) */}
           {currentRoom.players[2] && (
             <div className={`p-2 rounded-xl backdrop-blur-sm border flex items-center gap-2 ${
-              currentRoom.currentTurn === 2 ? 'bg-amber-500/20 border-amber-400 ring-2 ring-amber-400/50' : 'bg-black/40 border-emerald-900/60'
+              currentRoom.currentTurn === 2 ? 'bg-amber-500/25 border-amber-400 ring-4 ring-amber-400/50 shadow-lg shadow-amber-950/50' : 'bg-black/40 border-emerald-900/60'
             }`}>
               <Avatar url={currentRoom.players[2].avatar} name={currentRoom.players[2].username} size={8} />
               <div>
-                <p className="font-bold text-slate-100">{currentRoom.players[2].username}</p>
-                <p className="text-[10px] text-emerald-300">{currentRoom.players[2].tileCount ?? currentRoom.players[2].hand?.length ?? 0} Taş • {currentRoom.players[2].hasOpened ? 'Açtı' : 'Açmadı'}</p>
+                <div className="flex items-center gap-1">
+                  <p className="font-bold text-slate-100">{currentRoom.players[2].username}</p>
+                  {currentRoom.currentTurn === 2 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black animate-pulse">
+                      Sıra ({currentRoom.turnTimeRemaining}s)
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10px] text-emerald-300">
+                  🀄 {currentRoom.players[2].tileCount ?? currentRoom.players[2].hand?.length ?? 0} Taş • {
+                    currentRoom.players[2].hasOpened
+                      ? (currentRoom.players[2].openedMode === 'double' ? `${currentRoom.players[2].openedMeldsCount} Çift` : `${currentRoom.players[2].openedScore}p`)
+                      : 'Açmadı'
+                  }
+                </p>
               </div>
+              {currentRoom.players[2].discardPile && currentRoom.players[2].discardPile.length > 0 && (
+                <div className="flex flex-col items-center ml-1 pl-1.5 border-l border-emerald-800/60 shrink-0">
+                  <span className="text-[8px] uppercase font-bold text-slate-400 mb-0.5">Yere Atılan</span>
+                  {renderTileComponent(currentRoom.players[2].discardPile[currentRoom.players[2].discardPile.length - 1], false, 'sm')}
+                </div>
+              )}
             </div>
           )}
 
           {/* Right Player */}
           {currentRoom.players[3] && (
             <div className={`p-2 rounded-xl backdrop-blur-sm border flex items-center gap-2 ${
-              currentRoom.currentTurn === 3 ? 'bg-amber-500/20 border-amber-400 ring-2 ring-amber-400/50' : 'bg-black/40 border-emerald-900/60'
+              currentRoom.currentTurn === 3 ? 'bg-amber-500/25 border-amber-400 ring-4 ring-amber-400/50 shadow-lg shadow-amber-950/50' : 'bg-black/40 border-emerald-900/60'
             }`}>
               <Avatar url={currentRoom.players[3].avatar} name={currentRoom.players[3].username} size={8} />
               <div>
-                <p className="font-bold text-slate-100">{currentRoom.players[3].username}</p>
-                <p className="text-[10px] text-emerald-300">{currentRoom.players[3].tileCount ?? currentRoom.players[3].hand?.length ?? 0} Taş • {currentRoom.players[3].hasOpened ? 'Açtı' : 'Açmadı'}</p>
+                <div className="flex items-center gap-1">
+                  <p className="font-bold text-slate-100">{currentRoom.players[3].username}</p>
+                  {currentRoom.currentTurn === 3 && (
+                    <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black animate-pulse">
+                      Sıra ({currentRoom.turnTimeRemaining}s)
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10px] text-emerald-300">
+                  🀄 {currentRoom.players[3].tileCount ?? currentRoom.players[3].hand?.length ?? 0} Taş • {
+                    currentRoom.players[3].hasOpened
+                      ? (currentRoom.players[3].openedMode === 'double' ? `${currentRoom.players[3].openedMeldsCount} Çift` : `${currentRoom.players[3].openedScore}p`)
+                      : 'Açmadı'
+                  }
+                </p>
               </div>
+              {currentRoom.players[3].discardPile && currentRoom.players[3].discardPile.length > 0 && (
+                <div className="flex flex-col items-center ml-1 pl-1.5 border-l border-emerald-800/60 shrink-0">
+                  <span className="text-[8px] uppercase font-bold text-slate-400 mb-0.5">Yere Atılan</span>
+                  {renderTileComponent(currentRoom.players[3].discardPile[currentRoom.players[3].discardPile.length - 1], false, 'sm')}
+                </div>
+              )}
             </div>
           )}
         </div>
+
+        {/* Live Action Ticker (Kim Ne Attı / Ne Aldı Bildirimi) */}
+        {currentRoom.lastActionMessage && (
+          <div className="my-2 mx-auto w-fit max-w-[95%] px-4 py-1.5 rounded-full bg-slate-900/90 border border-amber-500/50 shadow-xl flex items-center gap-2 text-xs font-black text-amber-300 animate-pulse backdrop-blur-md">
+            <span className="text-sm">
+              {currentRoom.lastActionMessage.includes('çekti') ? '📥' :
+               currentRoom.lastActionMessage.includes('aldı') ? '➡️' :
+               currentRoom.lastActionMessage.includes('attı') ? '📤' :
+               currentRoom.lastActionMessage.includes('açtı') ? '✨' :
+               currentRoom.lastActionMessage.includes('işledi') ? '🧩' :
+               currentRoom.lastActionMessage.includes('kazandı') || currentRoom.lastActionMessage.includes('bitirdi') ? '🏆' : '⚡'}
+            </span>
+            <span className="truncate">{currentRoom.lastActionMessage}</span>
+          </div>
+        )}
 
         {/* CENTER TABLE: DECK, DISCARD PILE, OKEY INDICATOR & OPENED MELDS */}
         <div className="flex-1 my-3 bg-emerald-900/30 rounded-3xl border-2 border-emerald-800/60 p-3 md:p-5 flex flex-col justify-between shadow-inner">
@@ -1472,180 +1544,251 @@ export default function Okey101Board({
 
       </div>
 
-      {/* BOTTOM: TWO-ROW RACK (AHŞAP OKEY TAVLASI / ISTAKA) */}
-      <div className="shrink-0 w-full bg-gradient-to-b from-[#2e180b] via-[#1c0e06] to-[#0f0703] border-t-2 border-amber-600/70 p-1.5 sm:p-2 md:p-3 shadow-2xl z-30">
-        <div className="max-w-6xl mx-auto w-full">
-          {/* Rack Controls Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 pb-1.5 mb-1.5 border-b border-amber-900/60 text-xs">
-            {/* Live Hand Meld Score Counter */}
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="text-amber-200/90 font-medium text-[11px] sm:text-xs">Seri Barajı:</span>
-              <span className={`font-mono font-bold px-2 py-0.5 rounded-full text-xs ${
-                canOpenSerial ? 'bg-emerald-500 text-white animate-pulse' : 'bg-black/60 text-amber-400 border border-amber-500/30'
-              }`}>
-                {meldAnalysis.totalScore} / {minScoreNeeded}
-              </span>
-              <span className="text-slate-400 text-[11px]">
-                ({pairAnalysis.pairs.length} Çift)
-              </span>
-            </div>
+      {/* BOTTOM: TWO-ROW RACK (AHŞAP OKEY TAVLASI / ISTAKA) - HIDE WHEN SPECTATOR */}
+      {!isSpectator ? (
+        <div className="shrink-0 w-full bg-gradient-to-b from-[#2e180b] via-[#1c0e06] to-[#0f0703] border-t-2 border-amber-600/70 p-1.5 sm:p-2 md:p-3 shadow-2xl z-30">
+          <div className="max-w-6xl mx-auto w-full">
+            {/* Rack Controls Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 pb-1.5 mb-1.5 border-b border-amber-900/60 text-xs">
+              {/* Live Hand Meld Score Counter */}
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <span className="text-amber-200/90 font-medium text-[11px] sm:text-xs">Seri Barajı:</span>
+                <span className={`font-mono font-bold px-2 py-0.5 rounded-full text-xs ${
+                  canOpenSerial ? 'bg-emerald-500 text-white animate-pulse' : 'bg-black/60 text-amber-400 border border-amber-500/30'
+                }`}>
+                  {meldAnalysis.totalScore} / {minScoreNeeded}
+                </span>
+                <span className="text-slate-400 text-[11px]">
+                  ({pairAnalysis.pairs.length} Çift)
+                </span>
+              </div>
 
-            {/* Quick Action Buttons */}
-            <div className="flex items-center gap-1 sm:gap-1.5">
-              <button
-                type="button"
-                onClick={handleAutoSortRuns}
-                className="px-2 py-1 bg-emerald-800/80 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer border border-emerald-600/40"
-                title="Serileri ve grupları otomatik diz"
-              >
-                <Layers size={13} />
-                <span>Seri Diz</span>
-              </button>
+              {/* Quick Action Buttons */}
+              <div className="flex items-center gap-1 sm:gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleAutoSortRuns}
+                  className="px-2 py-1 bg-emerald-800/80 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer border border-emerald-600/40"
+                  title="Serileri ve grupları otomatik diz"
+                >
+                  <Layers size={13} />
+                  <span>Seri Diz</span>
+                </button>
 
-              <button
-                type="button"
-                onClick={handleAutoSortPairs}
-                className="px-2 py-1 bg-indigo-800/80 hover:bg-indigo-700 text-white text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer border border-indigo-600/40"
-                title="Çiftleri otomatik diz"
-              >
-                <span>Çift Diz</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={handleAutoSortPairs}
+                  className="px-2 py-1 bg-indigo-800/80 hover:bg-indigo-700 text-white text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer border border-indigo-600/40"
+                  title="Çiftleri otomatik diz"
+                >
+                  <span>Çift Diz</span>
+                </button>
 
-              {/* Open Melds Button */}
-              <button
-                type="button"
-                onClick={handleOpenMelds}
-                disabled={!isMyTurn || currentRoom.turnPhase !== 'discard' || !canOpenSerial || myPlayer?.hasOpened}
-                className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md flex items-center gap-1 cursor-pointer ${
-                  canOpenSerial && isMyTurn && !myPlayer?.hasOpened
-                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 animate-bounce'
-                    : 'bg-black/40 text-slate-500 border border-slate-700/50 disabled:opacity-50'
-                }`}
-              >
-                <Sparkles size={13} />
-                <span>Seri Aç ({meldAnalysis.totalScore}p)</span>
-              </button>
-
-              {/* Open Pairs Button */}
-              <button
-                type="button"
-                onClick={handleOpenPairs}
-                disabled={!isMyTurn || currentRoom.turnPhase !== 'discard' || !canOpenPairs || myPlayer?.hasOpened}
-                className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md flex items-center gap-1 cursor-pointer ${
-                  canOpenPairs && isMyTurn && !myPlayer?.hasOpened
-                    ? 'bg-purple-600 hover:bg-purple-500 text-white'
-                    : 'bg-black/40 text-slate-500 border border-slate-700/50 disabled:opacity-50'
-                }`}
-              >
-                <span>Çift Aç (5+)</span>
-              </button>
-
-              {/* Toolbar Discard Drop Zone & Action Button */}
-              <button
-                type="button"
-                data-drop-zone="discard"
-                onDragOver={handleDragOverDiscard}
-                onDragLeave={handleDragLeaveDiscard}
-                onDrop={handleDropOnDiscard}
-                onClick={() => {
-                  if (selectedSlot !== null) {
-                    if (canDiscard) handleDiscard(selectedSlot);
-                    else {
-                      setErrorMessage("Sıra sizde değil veya henüz taş çekmediniz.");
-                      setTimeout(() => setErrorMessage(null), 3000);
-                    }
-                  }
-                }}
-                disabled={!canDiscard}
-                className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md flex items-center gap-1 cursor-pointer ${
-                  isOverDiscardZone
-                    ? 'bg-red-500 text-white ring-2 ring-red-300 scale-105 animate-pulse'
-                    : canDiscard
-                      ? 'bg-amber-600 hover:bg-amber-500 text-white animate-pulse'
+                {/* Open Melds Button */}
+                <button
+                  type="button"
+                  onClick={handleOpenMelds}
+                  disabled={!isMyTurn || currentRoom.turnPhase !== 'discard' || !canOpenSerial || myPlayer?.hasOpened}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md flex items-center gap-1 cursor-pointer ${
+                    canOpenSerial && isMyTurn && !myPlayer?.hasOpened
+                      ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 animate-bounce'
                       : 'bg-black/40 text-slate-500 border border-slate-700/50 disabled:opacity-50'
-                }`}
-                title="Taşı buraya sürükleyip atabilir veya seçili taşı atabilirsiniz"
-              >
-                <ArrowDown size={13} />
-                <span>Taş At</span>
-              </button>
+                  }`}
+                >
+                  <Sparkles size={13} />
+                  <span>Seri Aç ({meldAnalysis.totalScore}p)</span>
+                </button>
 
-              {/* Finish Hand Button */}
-              <button
-                type="button"
-                onClick={handleDeclareFinish}
-                disabled={!isMyTurn}
-                className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shadow-md disabled:opacity-50"
-              >
-                Bitir
-              </button>
+                {/* Open Pairs Button */}
+                <button
+                  type="button"
+                  onClick={handleOpenPairs}
+                  disabled={!isMyTurn || currentRoom.turnPhase !== 'discard' || !canOpenPairs || myPlayer?.hasOpened}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md flex items-center gap-1 cursor-pointer ${
+                    canOpenPairs && isMyTurn && !myPlayer?.hasOpened
+                      ? 'bg-purple-600 hover:bg-purple-500 text-white'
+                      : 'bg-black/40 text-slate-500 border border-slate-700/50 disabled:opacity-50'
+                  }`}
+                >
+                  <span>Çift Aç (5+)</span>
+                </button>
+
+                {/* Toolbar Discard Drop Zone & Action Button */}
+                <button
+                  type="button"
+                  data-drop-zone="discard"
+                  onDragOver={handleDragOverDiscard}
+                  onDragLeave={handleDragLeaveDiscard}
+                  onDrop={handleDropOnDiscard}
+                  onClick={() => {
+                    if (selectedSlot !== null) {
+                      if (canDiscard) handleDiscard(selectedSlot);
+                      else {
+                        setErrorMessage("Sıra sizde değil veya henüz taş çekmediniz.");
+                        setTimeout(() => setErrorMessage(null), 3000);
+                      }
+                    }
+                  }}
+                  disabled={!canDiscard}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all shadow-md flex items-center gap-1 cursor-pointer ${
+                    isOverDiscardZone
+                      ? 'bg-red-500 text-white ring-2 ring-red-300 scale-105 animate-pulse'
+                      : canDiscard
+                        ? 'bg-amber-600 hover:bg-amber-500 text-white animate-pulse'
+                        : 'bg-black/40 text-slate-500 border border-slate-700/50 disabled:opacity-50'
+                  }`}
+                  title="Taşı buraya sürükleyip atabilir veya seçili taşı atabilirsiniz"
+                >
+                  <ArrowDown size={13} />
+                  <span>Taş At</span>
+                </button>
+
+                {/* Finish Hand Button */}
+                <button
+                  type="button"
+                  onClick={handleDeclareFinish}
+                  disabled={!isMyTurn}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white rounded-lg text-[11px] sm:text-xs font-bold transition-colors cursor-pointer shadow-md disabled:opacity-50"
+                >
+                  Bitir
+                </button>
+              </div>
             </div>
-          </div>
 
-          {/* AHŞAP OKEY TAVLASI (ÇİFT KATLI ISTAKA) */}
-          <div className="bg-gradient-to-b from-[#5c3a1e] via-[#432813] to-[#2c1708] border-2 border-[#8B5A2B] rounded-xl sm:rounded-2xl p-1 sm:p-1.5 shadow-[0_10px_25px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.15)] flex flex-col gap-1 sm:gap-1.5 overflow-x-auto no-scrollbar touch-pan-x">
-            {/* Üst Sıra (Slot 0 - 14) */}
-            <div className="flex gap-0.5 sm:gap-1 md:gap-1.5 justify-center min-w-max mx-auto">
-              {rack.slice(0, 15).map((tile, i) => {
-                const slotIndex = i;
-                const isSelected = selectedSlot === slotIndex;
-                const isDraggingThis = draggedSlot === slotIndex || touchDragState?.slotIndex === slotIndex;
-                return (
-                  <div
-                    key={slotIndex}
-                    data-slot-index={slotIndex}
-                    draggable={!!tile}
-                    onDragStart={(e) => handleDragStart(e, slotIndex)}
-                    onDragOver={handleDragOverSlot}
-                    onDrop={(e) => handleDrop(e, slotIndex)}
-                    onTouchStart={(e) => handleTouchStartSlot(e, slotIndex)}
-                    onTouchMove={handleTouchMoveSlot}
-                    onTouchEnd={handleTouchEndSlot}
-                    onClick={() => handleSlotClick(slotIndex)}
-                    className={`w-6.5 h-10 sm:w-8.5 sm:h-12.5 md:w-10 md:h-14 lg:w-11 lg:h-16 rounded-md sm:rounded-lg bg-[#1f1005] border flex items-center justify-center shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.85)] cursor-pointer transition-all select-none ${
-                      isDraggingThis
-                        ? 'opacity-40 border-amber-400/50 scale-95'
-                        : 'border-[#6b4221]/70 hover:border-amber-400/80 active:scale-95'
-                    }`}
-                  >
-                    {tile && renderTileComponent(tile, isSelected, 'md')}
-                  </div>
-                );
-              })}
-            </div>
+            {/* AHŞAP OKEY TAVLASI (ÇİFT KATLI ISTAKA) */}
+            <div className="bg-gradient-to-b from-[#5c3a1e] via-[#432813] to-[#2c1708] border-2 border-[#8B5A2B] rounded-xl sm:rounded-2xl p-1 sm:p-1.5 shadow-[0_10px_25px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.15)] flex flex-col gap-1 sm:gap-1.5 overflow-x-auto no-scrollbar touch-pan-x">
+              {/* Üst Sıra (Slot 0 - 14) */}
+              <div className="flex gap-0.5 sm:gap-1 md:gap-1.5 justify-center min-w-max mx-auto">
+                {rack.slice(0, 15).map((tile, i) => {
+                  const slotIndex = i;
+                  const isSelected = selectedSlot === slotIndex;
+                  const isDraggingThis = draggedSlot === slotIndex || touchDragState?.slotIndex === slotIndex;
+                  return (
+                    <div
+                      key={slotIndex}
+                      data-slot-index={slotIndex}
+                      draggable={!!tile}
+                      onDragStart={(e) => handleDragStart(e, slotIndex)}
+                      onDragOver={handleDragOverSlot}
+                      onDrop={(e) => handleDrop(e, slotIndex)}
+                      onTouchStart={(e) => handleTouchStartSlot(e, slotIndex)}
+                      onTouchMove={handleTouchMoveSlot}
+                      onTouchEnd={handleTouchEndSlot}
+                      onClick={() => handleSlotClick(slotIndex)}
+                      className={`w-6.5 h-10 sm:w-8.5 sm:h-12.5 md:w-10 md:h-14 lg:w-11 lg:h-16 rounded-md sm:rounded-lg bg-[#1f1005] border flex items-center justify-center shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.85)] cursor-pointer transition-all select-none ${
+                        isDraggingThis
+                          ? 'opacity-40 border-amber-400/50 scale-95'
+                          : 'border-[#6b4221]/70 hover:border-amber-400/80 active:scale-95'
+                      }`}
+                    >
+                      {tile && renderTileComponent(tile, isSelected, 'md')}
+                    </div>
+                  );
+                })}
+              </div>
 
-            {/* Alt Sıra (Slot 15 - 29) */}
-            <div className="flex gap-0.5 sm:gap-1 md:gap-1.5 justify-center min-w-max mx-auto">
-              {rack.slice(15, 30).map((tile, i) => {
-                const slotIndex = i + 15;
-                const isSelected = selectedSlot === slotIndex;
-                const isDraggingThis = draggedSlot === slotIndex || touchDragState?.slotIndex === slotIndex;
-                return (
-                  <div
-                    key={slotIndex}
-                    data-slot-index={slotIndex}
-                    draggable={!!tile}
-                    onDragStart={(e) => handleDragStart(e, slotIndex)}
-                    onDragOver={handleDragOverSlot}
-                    onDrop={(e) => handleDrop(e, slotIndex)}
-                    onTouchStart={(e) => handleTouchStartSlot(e, slotIndex)}
-                    onTouchMove={handleTouchMoveSlot}
-                    onTouchEnd={handleTouchEndSlot}
-                    onClick={() => handleSlotClick(slotIndex)}
-                    className={`w-6.5 h-10 sm:w-8.5 sm:h-12.5 md:w-10 md:h-14 lg:w-11 lg:h-16 rounded-md sm:rounded-lg bg-[#1f1005] border flex items-center justify-center shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.85)] cursor-pointer transition-all select-none ${
-                      isDraggingThis
-                        ? 'opacity-40 border-amber-400/50 scale-95'
-                        : 'border-[#6b4221]/70 hover:border-amber-400/80 active:scale-95'
-                    }`}
-                  >
-                    {tile && renderTileComponent(tile, isSelected, 'md')}
-                  </div>
-                );
-              })}
+              {/* Alt Sıra (Slot 15 - 29) */}
+              <div className="flex gap-0.5 sm:gap-1 md:gap-1.5 justify-center min-w-max mx-auto">
+                {rack.slice(15, 30).map((tile, i) => {
+                  const slotIndex = i + 15;
+                  const isSelected = selectedSlot === slotIndex;
+                  const isDraggingThis = draggedSlot === slotIndex || touchDragState?.slotIndex === slotIndex;
+                  return (
+                    <div
+                      key={slotIndex}
+                      data-slot-index={slotIndex}
+                      draggable={!!tile}
+                      onDragStart={(e) => handleDragStart(e, slotIndex)}
+                      onDragOver={handleDragOverSlot}
+                      onDrop={(e) => handleDrop(e, slotIndex)}
+                      onTouchStart={(e) => handleTouchStartSlot(e, slotIndex)}
+                      onTouchMove={handleTouchMoveSlot}
+                      onTouchEnd={handleTouchEndSlot}
+                      onClick={() => handleSlotClick(slotIndex)}
+                      className={`w-6.5 h-10 sm:w-8.5 sm:h-12.5 md:w-10 md:h-14 lg:w-11 lg:h-16 rounded-md sm:rounded-lg bg-[#1f1005] border flex items-center justify-center shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.85)] cursor-pointer transition-all select-none ${
+                        isDraggingThis
+                          ? 'opacity-40 border-amber-400/50 scale-95'
+                          : 'border-[#6b4221]/70 hover:border-amber-400/80 active:scale-95'
+                      }`}
+                    >
+                      {tile && renderTileComponent(tile, isSelected, 'md')}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : (
+        /* SPECTATOR MODE FOOTER BAR (ISTAKA GİZLENDİ) */
+        <div className="shrink-0 w-full bg-slate-950/95 border-t border-amber-500/40 p-2 sm:p-3 shadow-2xl z-30">
+          <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* South Player 0 Card in Spectator Mode */}
+            {currentRoom.players[0] && (
+              <div className={`p-2 sm:p-2.5 rounded-2xl border flex items-center gap-3 backdrop-blur-md transition-all ${
+                currentRoom.currentTurn === 0 
+                  ? 'bg-amber-500/25 border-amber-400 ring-4 ring-amber-400/50 shadow-lg shadow-amber-950/50 scale-105' 
+                  : 'bg-black/50 border-emerald-900/80'
+              }`}>
+                <Avatar url={currentRoom.players[0].avatar} name={currentRoom.players[0].username} size={9} />
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-black text-xs sm:text-sm text-white">{currentRoom.players[0].username}</span>
+                    {currentRoom.currentTurn === 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[9px] font-black animate-pulse">
+                        Sıra Onda ({currentRoom.turnTimeRemaining}s)
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-emerald-300 font-semibold mt-0.5">
+                    🀄 {currentRoom.players[0].tileCount ?? currentRoom.players[0].hand?.length ?? 0} Taş • {
+                      currentRoom.players[0].hasOpened
+                        ? (currentRoom.players[0].openedMode === 'double' ? `${currentRoom.players[0].openedMeldsCount} Çift Açtı` : `${currentRoom.players[0].openedScore}p Açtı`)
+                        : 'Açmadı'
+                    }
+                  </p>
+                </div>
+                {/* Last Discard Tile for Player 0 */}
+                {currentRoom.players[0].discardPile && currentRoom.players[0].discardPile.length > 0 && (
+                  <div className="flex flex-col items-center ml-2 pl-2 border-l border-emerald-800/60">
+                    <span className="text-[8px] uppercase font-bold text-slate-400 mb-0.5">Yere Atılan</span>
+                    {renderTileComponent(currentRoom.players[0].discardPile[currentRoom.players[0].discardPile.length - 1], false, 'sm')}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Spectator Status & Live Feed */}
+            <div className="flex-1 text-center px-2">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold mb-1">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span>Canlı İzleyici Modu • Istaka Gizlendi</span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Masayı canlı izliyorsunuz. El tamamlandığında sonraki turda boşalan koltuğa otomatik olarak oyuncu olarak başlayacaksınız.
+              </p>
+            </div>
+
+            {/* Quick Buttons */}
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setIsTableChatOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <MessageSquare size={14} className="text-blue-400" />
+                <span>Sohbet</span>
+              </button>
+              <button
+                onClick={handleLeaveRoom}
+                className="px-3 py-1.5 rounded-xl bg-red-600/80 hover:bg-red-600 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <LogOut size={14} />
+                <span>Masadan Ayrıl</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* WINNER / GAME OVER MODAL */}
       {currentRoom.status === 'ended' && (

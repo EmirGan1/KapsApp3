@@ -1589,11 +1589,241 @@ async function startServer() {
 
   const activeCardTablesRegistry = new Map<string, CardTableRegistryItem>();
   const blackjackRooms = new Map<string, any>();
+  const okeyRooms = new Map<string, any>();
+  const okey101Rooms = new Map<string, any>();
+  const unoRooms = new Map<string, any>();
+  const drawGuessRooms = new Map<string, any>();
   let closeAnyTableAndNotify: (tableId: string) => boolean;
+  let refundBlackjackTableBets: (tableId: string, reason: string) => Promise<boolean>;
+
+  const getUnifiedActiveTablesList = (): CardTableRegistryItem[] => {
+    const list: CardTableRegistryItem[] = [];
+    const addedIds = new Set<string>();
+
+    // 1. Explicitly registered tables in activeCardTablesRegistry
+    for (const [id, table] of activeCardTablesRegistry.entries()) {
+      list.push(table);
+      addedIds.add(String(id));
+    }
+
+    // 2. Blackjack rooms
+    for (const [id, tableState] of blackjackRooms.entries()) {
+      const tid = String(id);
+      if (!addedIds.has(tid) && tableState) {
+        const occupiedSeats = (tableState.seats || []).filter((s: any) => s !== null);
+        const humanCount = occupiedSeats.filter((s: any) => !s.isBot).length;
+        const botCount = occupiedSeats.filter((s: any) => s.isBot).length;
+        const hostSeat = occupiedSeats.find((s: any) => s.isHost) || occupiedSeats[0];
+        list.push({
+          id: tid,
+          gameType: "blackjack",
+          title: tableState.title || `Blackjack ${tid}`,
+          hostId: hostSeat ? hostSeat.userId : (tableState.hostId || 0),
+          hostName: hostSeat ? hostSeat.username : "Masa Yöneticisi",
+          hostAvatar: hostSeat ? hostSeat.avatar : null,
+          playerCount: Math.max(1, humanCount),
+          maxPlayers: 5,
+          botCount,
+          status: tableState.phase === 'BETTING' ? 'Lobi Bekliyor' : 'Oyunda',
+          minBet: tableState.minBet,
+          maxBet: tableState.maxBet,
+          minBalance: tableState.minBalance,
+          isPrivate: Boolean(tableState.isPrivate),
+          createdAt: 'Bugün',
+          updatedAt: Date.now()
+        });
+        addedIds.add(tid);
+      }
+    }
+
+    // 3. Classic Okey rooms
+    for (const [id, r] of okeyRooms.entries()) {
+      const tid = String(id);
+      if (!addedIds.has(tid) && r) {
+        const players = Array.isArray(r.players) ? r.players : [];
+        const humanPlayers = players.filter((p: any) => !p.isBot);
+        const botCount = players.filter((p: any) => p.isBot).length;
+        const host = players.find((p: any) => p.id === (r.hostId || r.creatorId)) || humanPlayers[0] || players[0];
+        list.push({
+          id: tid,
+          gameType: "okey",
+          title: r.name || `Klasik Okey ${tid}`,
+          hostId: host?.id || r.hostId || 0,
+          hostName: host?.username || "Masa Yöneticisi",
+          hostAvatar: host?.avatar || null,
+          playerCount: Math.max(1, humanPlayers.length),
+          maxPlayers: 4,
+          botCount,
+          status: r.status === 'playing' ? 'Oyunda' : 'Lobi Bekliyor',
+          isPrivate: Boolean(r.isHidden),
+          gameMode: 'classic',
+          createdAt: 'Bugün',
+          updatedAt: Date.now()
+        });
+        addedIds.add(tid);
+      }
+    }
+
+    // 4. 101 Okey rooms
+    for (const [id, r] of okey101Rooms.entries()) {
+      const tid = String(id);
+      if (!addedIds.has(tid) && r) {
+        const players = Array.isArray(r.players) ? r.players : [];
+        const humanPlayers = players.filter((p: any) => !p.isBot);
+        const botCount = players.filter((p: any) => p.isBot).length;
+        const host = players.find((p: any) => p.id === (r.hostId || r.creatorId)) || humanPlayers[0] || players[0];
+        list.push({
+          id: tid,
+          gameType: "okey101",
+          title: r.name || `101 Okey ${tid}`,
+          hostId: host?.id || r.hostId || 0,
+          hostName: host?.username || "Masa Yöneticisi",
+          hostAvatar: host?.avatar || null,
+          playerCount: Math.max(1, humanPlayers.length),
+          maxPlayers: 4,
+          botCount,
+          status: r.status === 'playing' ? 'Oyunda' : 'Lobi Bekliyor',
+          isPrivate: Boolean(r.isHidden),
+          gameMode: r.subMode || 'okey101',
+          createdAt: 'Bugün',
+          updatedAt: Date.now()
+        });
+        addedIds.add(tid);
+      }
+    }
+
+    // 5. UNO rooms
+    for (const [id, r] of unoRooms.entries()) {
+      const tid = String(id);
+      if (!addedIds.has(tid) && r) {
+        const players = Array.isArray(r.players) ? r.players : [];
+        const humanPlayers = players.filter((p: any) => !p.isBot);
+        const botCount = players.filter((p: any) => p.isBot).length;
+        const host = players.find((p: any) => p.id === (r.hostId || r.creatorId)) || humanPlayers[0] || players[0];
+        list.push({
+          id: tid,
+          gameType: "uno",
+          title: r.name || `UNO ${tid}`,
+          hostId: host?.id || r.hostId || 0,
+          hostName: host?.username || "Masa Yöneticisi",
+          hostAvatar: host?.avatar || null,
+          playerCount: Math.max(1, humanPlayers.length),
+          maxPlayers: r.maxPlayers || 4,
+          botCount,
+          status: r.status === 'playing' ? 'Oyunda' : 'Lobi Bekliyor',
+          isPrivate: Boolean(r.isHidden),
+          gameMode: 'standard',
+          createdAt: 'Bugün',
+          updatedAt: Date.now()
+        });
+        addedIds.add(tid);
+      }
+    }
+
+    // 6. Draw & Guess rooms
+    for (const [id, r] of drawGuessRooms.entries()) {
+      const tid = String(id);
+      if (!addedIds.has(tid) && r) {
+        const players = Array.isArray(r.players) ? r.players : [];
+        const humanPlayers = players.filter((p: any) => !p.isBot);
+        const host = players.find((p: any) => p.id === (r.hostId || r.creatorId)) || humanPlayers[0] || players[0];
+        list.push({
+          id: tid,
+          gameType: "drawguess",
+          title: r.name || `Çiz Bakalım ${tid}`,
+          hostId: host?.id || r.hostId || 0,
+          hostName: host?.username || "Masa Yöneticisi",
+          hostAvatar: host?.avatar || null,
+          playerCount: Math.max(1, humanPlayers.length),
+          maxPlayers: r.maxPlayers || 10,
+          botCount: 0,
+          status: r.status === 'playing' ? 'Oyunda' : 'Lobi Bekliyor',
+          isPrivate: Boolean(r.isHidden),
+          gameMode: 'drawing',
+          createdAt: 'Bugün',
+          updatedAt: Date.now()
+        });
+        addedIds.add(tid);
+      }
+    }
+
+    return list;
+  };
 
   const broadcastActiveTables = () => {
-    const list = Array.from(activeCardTablesRegistry.values());
+    const list = getUnifiedActiveTablesList();
     io.emit("active_tables_updated", list);
+  };
+
+  refundBlackjackTableBets = async (tableId: string, reason: string): Promise<boolean> => {
+    const tid = String(tableId);
+    const tableState = blackjackRooms.get(tid);
+
+    if (tableState && Array.isArray(tableState.seats)) {
+      for (const seat of tableState.seats) {
+        if (seat && !seat.isBot && seat.userId) {
+          let totalBetToRefund = 0;
+          if (Array.isArray(seat.hands) && seat.hands.length > 0) {
+            for (const h of seat.hands) {
+              totalBetToRefund += Number(h.bet || 0);
+            }
+          }
+          if (totalBetToRefund === 0 && Number(seat.currentBet) > 0) {
+            totalBetToRefund = Number(seat.currentBet);
+          }
+
+          if (totalBetToRefund > 0) {
+            try {
+              await client.execute({
+                sql: "UPDATE users SET chips = COALESCE(chips, 0) + ? WHERE id = ?",
+                args: [totalBetToRefund, seat.userId]
+              });
+              const uRes = await client.execute({
+                sql: "SELECT chips FROM users WHERE id = ?",
+                args: [seat.userId]
+              });
+              const newChips = uRes.rows[0]?.chips;
+
+              const refundMsg = {
+                userId: seat.userId,
+                chips: newChips,
+                delta: totalBetToRefund,
+                message: `⚠️ Bahis İadesi: ${reason} Masadaki ${totalBetToRefund} ₺ bahsiniz eksiksiz hesabınıza iade edildi.`
+              };
+
+              const targetSockId = onlineUsers.get(Number(seat.userId));
+              if (targetSockId) {
+                io.to(targetSockId).emit("chips_updated", refundMsg);
+                io.to(targetSockId).emit("blackjack_bet_refunded", {
+                  tableId: tid,
+                  amount: totalBetToRefund,
+                  reason
+                });
+              }
+            } catch (err) {
+              console.error(`Error refunding blackjack bet for user ${seat.userId}:`, err);
+            }
+          }
+        }
+      }
+    }
+
+    io.to(`blackjack_${tid}`).emit("blackjack_game_voided", {
+      tableId: tid,
+      reason,
+      refunded: true
+    });
+    io.to(`blackjack_${tid}`).emit("table_closed", {
+      tableId: tid,
+      reason: `Masa kapatıldı: ${reason}`,
+      redirectTo: "lobby"
+    });
+
+    blackjackRooms.delete(tid);
+    activeCardTablesRegistry.delete(tid);
+    broadcastActiveTables();
+    io.emit("table:deleted", { tableId: tid });
+    return true;
   };
 
   // Strict Admin Middleware: ONLY user "emirgan" is permitted
@@ -1911,7 +2141,7 @@ async function startServer() {
   // Active Card & Game Tables API
   app.get(["/api/admin/active-tables", "/api/active-tables"], async (req, res) => {
     try {
-      const tablesList = Array.from(activeCardTablesRegistry.values());
+      const tablesList = getUnifiedActiveTablesList();
       return res.json({
         success: true,
         count: tablesList.length,
@@ -2633,8 +2863,6 @@ async function startServer() {
     io.emit("all_user_locations", locList);
   };
 
-  const okeyRooms = new Map<string, any>();
-
   const isUserAllowedInRoom = (room: any, targetUser: any) => {
     if (!room || !room.isHidden) return true;
     if (!targetUser) return false;
@@ -2805,8 +3033,6 @@ async function startServer() {
   };
 
   // --- UNO Game Engine & Logic (Completely Isolated from Okey) ---
-  const unoRooms = new Map<string, any>();
-
   const getSanitizedUnoRoom = (room: any) => {
     return {
       id: room.id,
@@ -2975,8 +3201,6 @@ async function startServer() {
   };
 
   // --- DRAW & GUESS (ÇİZ & TAHMİN ET) IN-MEMORY LOGIC ---
-  const drawGuessRooms = new Map<string, any>();
-
   const normalizeTrText = (text: string) => {
     return normalizeTr(text);
   };
@@ -3101,8 +3325,6 @@ async function startServer() {
   };
 
   // --- 101 Okey Game Engine & Room State Management ---
-  const okey101Rooms = new Map<string, any>();
-
   const getSanitized101Room = (room: any) => {
     return {
       id: room.id,
@@ -3471,15 +3693,15 @@ async function startServer() {
     const tid = String(tableId);
 
     // 1. Blackjack & Batak & activeCardTablesRegistry
+    if (blackjackRooms.has(tid)) {
+      void refundBlackjackTableBets(tid, "Masa yönetici tarafından kapatıldı.");
+    }
     if (activeCardTablesRegistry.has(tid)) {
       activeCardTablesRegistry.delete(tid);
     }
-    if (blackjackRooms.has(tid)) {
-      blackjackRooms.delete(tid);
-    }
-    io.to(`blackjack_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
-    io.to(`batak_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
-    io.to(tid).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+    io.to(`blackjack_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+    io.to(`batak_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+    io.to(tid).emit("table_closed", { tableId: tid, reason: "Masa Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
 
     // 2. Classic Okey
     if (okeyRooms.has(tid)) {
@@ -5238,7 +5460,7 @@ async function startServer() {
 
     // Active Card Tables Socket Sync Handlers
     socket.on("get_active_tables", (cb?: (tables: any[]) => void) => {
-      const list = Array.from(activeCardTablesRegistry.values());
+      const list = getUnifiedActiveTablesList();
       if (typeof cb === "function") cb(list);
       else socket.emit("active_tables_updated", list);
     });
@@ -5307,6 +5529,7 @@ async function startServer() {
       if (!tid) return cb && cb({ error: "Masa kimliği eksik." });
 
       if (gameType === "blackjack" || blackjackRooms.has(tid)) {
+        socket.data.currentBlackjackTable = tid;
         socket.join(`blackjack_${tid}`);
         const tbl = blackjackRooms.get(tid);
         if (tbl) {
@@ -5341,16 +5564,19 @@ async function startServer() {
         return;
       }
       if (gameType === "uno" || unoRooms.has(tid)) {
+        socket.data.currentUnoRoom = tid;
         socket.join(`uno_${tid}`);
         if (cb) cb({ success: true, roomId: tid });
         return;
       }
       if (gameType === "okey101" || okey101Rooms.has(tid)) {
+        socket.data.currentOkey101Room = tid;
         socket.join(`okey101_${tid}`);
         if (cb) cb({ success: true, roomId: tid });
         return;
       }
       if (gameType === "okey" || okeyRooms.has(tid)) {
+        socket.data.currentOkeyRoom = tid;
         socket.join(`okey_${tid}`);
         if (cb) cb({ success: true, roomId: tid });
         return;
@@ -5361,6 +5587,8 @@ async function startServer() {
     // Blackjack Socket Handlers
     socket.on("blackjack_update_state", (tableState: any) => {
       if (tableState && tableState.id) {
+        socket.data.currentBlackjackTable = String(tableState.id);
+        socket.join(`blackjack_${tableState.id}`);
         blackjackRooms.set(String(tableState.id), tableState);
         socket.to(`blackjack_${tableState.id}`).emit("blackjack_state", tableState);
 
@@ -5401,6 +5629,7 @@ async function startServer() {
 
     socket.on("get_blackjack_state", ({ tableId }: { tableId: string }, cb?: any) => {
       if (tableId) {
+        socket.data.currentBlackjackTable = String(tableId);
         socket.join(`blackjack_${tableId}`);
         const existing = blackjackRooms.get(String(tableId));
         if (existing) {
@@ -5409,6 +5638,84 @@ async function startServer() {
         } else if (cb) {
           cb({ success: false });
         }
+      }
+    });
+
+    socket.on("leave_blackjack", async ({ tableId }: { tableId: string }, cb?: any) => {
+      const tid = String(tableId);
+      socket.leave(`blackjack_${tid}`);
+      if (socket.data.currentBlackjackTable === tid) {
+        socket.data.currentBlackjackTable = null;
+      }
+      const tableState = blackjackRooms.get(tid);
+      if (!tableState) {
+        if (cb) cb({ success: true });
+        return;
+      }
+
+      const seats = Array.isArray(tableState.seats) ? tableState.seats : [];
+      const userSeatIndex = seats.findIndex((s: any) => s && !s.isBot && s.userId === user.id);
+      const isHost = userSeatIndex !== -1 ? Boolean(seats[userSeatIndex].isHost) : (tableState.hostId === user.id);
+      const isMidGame = ['DEALING', 'PLAYER_TURNS', 'DEALER_TURN'].includes(tableState.phase);
+
+      if (isHost) {
+        if (isMidGame) {
+          // Mid-game host exit: VOID ROUND, REFUND ALL BETS, CLOSE TABLE
+          await refundBlackjackTableBets(tid, `Masa kurucusu (${user.username}) oyun ortasında ayrıldı.`);
+        } else {
+          // Lobby / pre-game host exit: CLOSE TABLE, REFUND ANY BETS
+          await refundBlackjackTableBets(tid, `Masa kurucusu (${user.username}) masayı kapattı.`);
+        }
+        if (cb) cb({ success: true, closed: true });
+        return;
+      }
+
+      // Non-host player leaving
+      if (userSeatIndex !== -1) {
+        if (isMidGame) {
+          // Mid-game player exit: VOID ROUND, REFUND ALL BETS, CLOSE TABLE
+          await refundBlackjackTableBets(tid, `Masadaki oyunculardan biri (${user.username}) ayrıldığı için tur iptal edildi.`);
+          if (cb) cb({ success: true, voided: true });
+          return;
+        } else {
+          // Pre-game / betting phase: refund leaving player's bet if any, vacate seat
+          const seat = seats[userSeatIndex];
+          if (seat && seat.currentBet > 0) {
+            try {
+              await client.execute({
+                sql: "UPDATE users SET chips = COALESCE(chips, 0) + ? WHERE id = ?",
+                args: [seat.currentBet, user.id]
+              });
+              const uRes = await client.execute({
+                sql: "SELECT chips FROM users WHERE id = ?",
+                args: [user.id]
+              });
+              socket.emit("chips_updated", {
+                userId: user.id,
+                chips: uRes.rows[0]?.chips,
+                delta: seat.currentBet,
+                message: `Masadan ayrıldınız. ${seat.currentBet} ₺ bahsiniz eksiksiz hesabınıza iade edildi.`
+              });
+            } catch (e) {}
+          }
+          seats[userSeatIndex] = null;
+          // If no human left in table, close table
+          const remainingHumans = seats.filter((s: any) => s && !s.isBot);
+          if (remainingHumans.length === 0) {
+            blackjackRooms.delete(tid);
+            activeCardTablesRegistry.delete(tid);
+            broadcastActiveTables();
+            io.emit("table:deleted", { tableId: tid });
+          } else {
+            tableState.seats = seats;
+            blackjackRooms.set(tid, tableState);
+            io.to(`blackjack_${tid}`).emit("blackjack_state", tableState);
+            broadcastActiveTables();
+          }
+          if (cb) cb({ success: true, left: true });
+        }
+      } else {
+        if (cb) cb({ success: true });
       }
     });
 
@@ -6387,6 +6694,18 @@ async function startServer() {
       emitRooms();
       socket.emit("okey_room_created", roomId);
       broadcastOkeyRoom(roomId);
+      broadcastActiveTables();
+      io.emit("table:created", {
+        id: roomId,
+        gameType: "okey",
+        title: name || "Klasik Okey Masası",
+        hostId: user.id,
+        hostName: user.username,
+        playerCount: 1,
+        maxPlayers: 4,
+        botCount: 0,
+        status: "Lobi Bekliyor"
+      });
     });
 
     socket.on("okey_update_allowed_users", ({ roomId, allowedUsers }: { roomId: string; allowedUsers: string[] }, cb?: any) => {
@@ -6731,11 +7050,24 @@ async function startServer() {
         socket.leave(`okey_${roomId}`);
         const room = okeyRooms.get(roomId);
         if (room) {
-          const wasHost = room.hostId === user.id;
+          const wasHost = room.hostId === user.id || room.creatorId === user.id;
+          if (wasHost && room.status === 'waiting') {
+            io.to(`okey_${roomId}`).emit("table_closed", { tableId: roomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+            io.to(roomId).emit("table_closed", { tableId: roomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+            clearTimeout(room.botTimeout);
+            okeyRooms.delete(roomId);
+            emitRooms();
+            broadcastActiveTables();
+            io.emit("table:deleted", { tableId: roomId });
+            socket.data.currentOkeyRoom = null;
+            return;
+          }
+
           room.players = room.players.filter((p: any) => p.id !== user.id);
           if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
             clearTimeout(room.botTimeout);
             okeyRooms.delete(roomId);
+            io.emit("table:deleted", { tableId: roomId });
           } else {
             if (wasHost) {
               const nextRealPlayer = room.players.find((p: any) => !p.isBot);
@@ -6748,6 +7080,7 @@ async function startServer() {
             broadcastOkeyRoom(roomId);
           }
           emitRooms();
+          broadcastActiveTables();
         }
         socket.data.currentOkeyRoom = null;
       }
@@ -8237,6 +8570,18 @@ async function startServer() {
 
       broadcast101Room(roomId);
       emit101RoomsList();
+      broadcastActiveTables();
+      io.emit("table:created", {
+        id: roomId,
+        gameType: "okey101",
+        title: name || `${user.username}'in 101 Masası`,
+        hostId: user.id,
+        hostName: user.username,
+        playerCount: 1,
+        maxPlayers: 4,
+        botCount: 0,
+        status: "Lobi Bekliyor"
+      });
       if (cb) cb({ success: true, roomId });
     });
 
@@ -8350,6 +8695,19 @@ async function startServer() {
       const roomId = rawRoomId || socket.data.currentOkey101Room;
       const room = okey101Rooms.get(roomId);
       if (room) {
+        const wasHost = room.hostId === user.id || room.creatorId === user.id;
+        if (wasHost && room.status === 'waiting') {
+          io.to(`okey101_${roomId}`).emit("table_closed", { tableId: roomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+          io.to(roomId).emit("table_closed", { tableId: roomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+          cleanup101Room(roomId);
+          okey101Rooms.delete(roomId);
+          emit101RoomsList();
+          broadcastActiveTables();
+          io.emit("table:deleted", { tableId: roomId });
+          if (cb) cb({ success: true, closed: true });
+          return;
+        }
+
         room.players = room.players.filter((p: any) => p.id !== user.id);
         socket.leave(`okey101_${roomId}`);
         socket.leave(roomId);
@@ -8357,6 +8715,7 @@ async function startServer() {
 
         if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
           cleanup101Room(roomId);
+          io.emit("table:deleted", { tableId: roomId });
         } else {
           if (room.hostId === user.id) {
             const nextReal = room.players.find((p: any) => !p.isBot);
@@ -8369,6 +8728,7 @@ async function startServer() {
           broadcast101Room(roomId);
         }
         emit101RoomsList();
+        broadcastActiveTables();
       }
       if (cb) cb({ success: true });
     });
@@ -8975,45 +9335,50 @@ async function startServer() {
       if (unoRoomId) {
         const room = unoRooms.get(unoRoomId);
         if (room && room.status === 'waiting') {
-          const wasHost = room.hostId === user.id;
-          room.players = room.players.filter((p: any) => p.id !== user.id);
-          if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
+          const wasHost = room.hostId === user.id || room.creatorId === user.id;
+          if (wasHost) {
+            io.to(`uno_${unoRoomId}`).emit("table_closed", { tableId: unoRoomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+            io.to(unoRoomId).emit("table_closed", { tableId: unoRoomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
             cleanupUnoRoom(unoRoomId);
+            emitUnoRoomsList();
+            broadcastActiveTables();
+            io.emit("table:deleted", { tableId: unoRoomId });
           } else {
-            if (wasHost) {
-              const nextReal = room.players.find((p: any) => !p.isBot);
-              if (nextReal) {
-                room.hostId = nextReal.id;
-                room.creatorId = nextReal.id;
-                room.lastActionMessage = `Masa yöneticisi ayrıldı. Yeni yönetici: ${nextReal.username}`;
-              }
+            room.players = room.players.filter((p: any) => p.id !== user.id);
+            if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
+              cleanupUnoRoom(unoRoomId);
+            } else {
+              broadcastUnoRoom(unoRoomId);
             }
-            broadcastUnoRoom(unoRoomId);
+            emitUnoRoomsList();
+            broadcastActiveTables();
           }
-          emitUnoRoomsList();
         }
       }
       const roomId = socket.data.currentOkeyRoom;
       if (roomId) {
         const room = okeyRooms.get(roomId);
-        // Only remove player if waiting in lobby, NOT if actively playing!
         if (room && room.status === 'waiting') {
-          const wasHost = room.hostId === user.id;
-          room.players = room.players.filter((p: any) => p.id !== user.id);
-          if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
-            cleanupOkeyRoom(roomId);
+          const wasHost = room.hostId === user.id || room.creatorId === user.id;
+          if (wasHost) {
+            io.to(`okey_${roomId}`).emit("table_closed", { tableId: roomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+            io.to(roomId).emit("table_closed", { tableId: roomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+            clearTimeout(room.botTimeout);
+            okeyRooms.delete(roomId);
+            emitRooms();
+            broadcastActiveTables();
+            io.emit("table:deleted", { tableId: roomId });
           } else {
-            if (wasHost) {
-              const nextRealPlayer = room.players.find((p: any) => !p.isBot);
-              if (nextRealPlayer) {
-                room.hostId = nextRealPlayer.id;
-                room.creatorId = nextRealPlayer.id;
-                room.lastActionMessage = `Masa yöneticisi ayrıldı. Yeni yönetici: ${nextRealPlayer.username}`;
-              }
+            room.players = room.players.filter((p: any) => p.id !== user.id);
+            if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
+              clearTimeout(room.botTimeout);
+              okeyRooms.delete(roomId);
+            } else {
+              broadcastOkeyRoom(roomId);
             }
-            broadcastOkeyRoom(roomId);
+            emitRooms();
+            broadcastActiveTables();
           }
-          emitRooms();
         }
       }
 
@@ -9021,22 +9386,67 @@ async function startServer() {
       if (okey101RoomId) {
         const room = okey101Rooms.get(okey101RoomId);
         if (room && room.status === 'waiting') {
-          const wasHost = room.hostId === user.id;
-          room.players = room.players.filter((p: any) => p.id !== user.id);
-          if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
+          const wasHost = room.hostId === user.id || room.creatorId === user.id;
+          if (wasHost) {
+            io.to(`okey101_${okey101RoomId}`).emit("table_closed", { tableId: okey101RoomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
+            io.to(okey101RoomId).emit("table_closed", { tableId: okey101RoomId, reason: "Masa kurucusu ayrıldığı için masa kapatıldı.", redirectTo: "lobby" });
             cleanup101Room(okey101RoomId);
+            okey101Rooms.delete(okey101RoomId);
+            emit101RoomsList();
+            broadcastActiveTables();
+            io.emit("table:deleted", { tableId: okey101RoomId });
           } else {
-            if (wasHost) {
-              const nextRealPlayer = room.players.find((p: any) => !p.isBot);
-              if (nextRealPlayer) {
-                room.hostId = nextRealPlayer.id;
-                room.creatorId = nextRealPlayer.id;
-                room.lastActionMessage = `Masa yöneticisi ayrıldı. Yeni yönetici: ${nextRealPlayer.username}`;
+            room.players = room.players.filter((p: any) => p.id !== user.id);
+            if (room.players.length === 0 || room.players.every((p: any) => p.isBot)) {
+              cleanup101Room(okey101RoomId);
+            } else {
+              broadcast101Room(okey101RoomId);
+            }
+            emit101RoomsList();
+            broadcastActiveTables();
+          }
+        }
+      }
+
+      // Blackjack Disconnect & Auto Bet Refund Handling
+      const currentBjTable = socket.data.currentBlackjackTable;
+      if (currentBjTable) {
+        const tid = String(currentBjTable);
+        const tableState = blackjackRooms.get(tid);
+        if (tableState && Array.isArray(tableState.seats)) {
+          const userSeatIndex = tableState.seats.findIndex((s: any) => s && !s.isBot && s.userId === user.id);
+          if (userSeatIndex !== -1) {
+            const isMidGame = ['DEALING', 'PLAYER_TURNS', 'DEALER_TURN'].includes(tableState.phase);
+            const isHost = Boolean(tableState.seats[userSeatIndex].isHost) || tableState.hostId === user.id;
+
+            if (isMidGame) {
+              await refundBlackjackTableBets(tid, `${user.username} oyundan koptu / ayrıldı.`);
+            } else if (isHost) {
+              await refundBlackjackTableBets(tid, `Masa kurucusu (${user.username}) ayrıldığı için masa kapatıldı.`);
+            } else {
+              const seat = tableState.seats[userSeatIndex];
+              if (seat && seat.currentBet > 0) {
+                try {
+                  await client.execute({
+                    sql: "UPDATE users SET chips = COALESCE(chips, 0) + ? WHERE id = ?",
+                    args: [seat.currentBet, user.id]
+                  });
+                } catch (e) {}
+              }
+              tableState.seats[userSeatIndex] = null;
+              const remainingHumans = tableState.seats.filter((s: any) => s && !s.isBot);
+              if (remainingHumans.length === 0) {
+                blackjackRooms.delete(tid);
+                activeCardTablesRegistry.delete(tid);
+                broadcastActiveTables();
+                io.emit("table:deleted", { tableId: tid });
+              } else {
+                blackjackRooms.set(tid, tableState);
+                io.to(`blackjack_${tid}`).emit("blackjack_state", tableState);
+                broadcastActiveTables();
               }
             }
-            broadcast101Room(okey101RoomId);
           }
-          emit101RoomsList();
         }
       }
       

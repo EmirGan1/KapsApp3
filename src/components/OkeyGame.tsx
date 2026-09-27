@@ -843,21 +843,24 @@ export default function OkeyGame({
   const tablePlayers = currentRoom.players || [];
   
   // Arrange players relative to current user:
-  // Me is Bottom.
-  // Others: Left (Seat +3), Top (Seat +2), Right (Seat +1)
+  // When active player: Me is Bottom. Others: Left (Seat +3), Top (Seat +2), Right (Seat +1)
+  // When spectator: Player 0 Bottom, Player 1 Right, Player 2 Top, Player 3 Left
   let leftOpponent = null;
   let topOpponent = null;
   let rightOpponent = null;
+  let bottomPlayer = null;
 
   if (tablePlayers.length > 0) {
     if (myPlayerIdx !== -1) {
       rightOpponent = tablePlayers[(myPlayerIdx + 1) % tablePlayers.length] || null;
       topOpponent = tablePlayers.length >= 3 ? tablePlayers[(myPlayerIdx + 2) % tablePlayers.length] : null;
       leftOpponent = tablePlayers.length >= 4 ? tablePlayers[(myPlayerIdx + 3) % tablePlayers.length] : null;
+      bottomPlayer = tablePlayers[myPlayerIdx] || null;
     } else {
-      leftOpponent = tablePlayers[0] || null;
-      topOpponent = tablePlayers[1] || null;
-      rightOpponent = tablePlayers[2] || null;
+      bottomPlayer = tablePlayers[0] || null;
+      rightOpponent = tablePlayers[1] || null;
+      topOpponent = tablePlayers[2] || null;
+      leftOpponent = tablePlayers[3] || null;
     }
   }
 
@@ -1355,125 +1358,183 @@ export default function OkeyGame({
           )}
         </div>
 
-        {/* Player Action Buttons Toolbar */}
-        <div className="w-full max-w-3xl mx-auto flex items-center justify-between gap-1 sm:gap-2 px-1 z-10">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button 
-              onClick={handleSortRuns}
-              className="px-2.5 sm:px-3 py-1 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-slate-700 shadow"
-              title="Taşları renklere ve sayılara göre serilere diz"
-            >
-              <Layers size={13} className="text-emerald-400" /> Seri
-            </button>
-            <button 
-              onClick={handleSortPairs}
-              className="px-2.5 sm:px-3 py-1 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-slate-700 shadow"
-              title="Aynı taşları yan yana çiftlere diz"
-            >
-              <CheckCircle2 size={13} className="text-blue-400" /> Çift
-            </button>
+        {/* ACTIVE PLAYER RACK & ACTIONS OR SPECTATOR VIEW */}
+        {!isSpectator ? (
+          <>
+            {/* Player Action Buttons Toolbar */}
+            <div className="w-full max-w-3xl mx-auto flex items-center justify-between gap-1 sm:gap-2 px-1 z-10">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button 
+                  onClick={handleSortRuns}
+                  className="px-2.5 sm:px-3 py-1 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-slate-700 shadow"
+                  title="Taşları renklere ve sayılara göre serilere diz"
+                >
+                  <Layers size={13} className="text-emerald-400" /> Seri
+                </button>
+                <button 
+                  onClick={handleSortPairs}
+                  className="px-2.5 sm:px-3 py-1 bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-[11px] sm:text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-slate-700 shadow"
+                  title="Aynı taşları yan yana çiftlere diz"
+                >
+                  <CheckCircle2 size={13} className="text-blue-400" /> Çift
+                </button>
 
-            {/* Selected Tile indicator & Fast Discard Action */}
-            {selectedSlot !== null && rack[selectedSlot] && (
-              <div className="flex items-center gap-1 bg-amber-950/80 border border-amber-500/60 rounded-lg px-2 py-0.5 animate-in fade-in">
-                <span className="text-[10px] text-amber-200 font-bold hidden xs:inline">
-                  Seçili: Hedef göze dokun
-                </span>
-                {canDiscard && (
-                  <button
-                    onClick={() => handleDiscard(selectedSlot)}
-                    className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] sm:text-[11px] px-2 py-0.5 rounded shadow flex items-center gap-0.5 animate-pulse"
-                    title="Seçili taşı sağ ıskartaya at"
+                {/* Selected Tile indicator & Fast Discard Action */}
+                {selectedSlot !== null && rack[selectedSlot] && (
+                  <div className="flex items-center gap-1 bg-amber-950/80 border border-amber-500/60 rounded-lg px-2 py-0.5 animate-in fade-in">
+                    <span className="text-[10px] text-amber-200 font-bold hidden xs:inline">
+                      Seçili: Hedef göze dokun
+                    </span>
+                    {canDiscard && (
+                      <button
+                        onClick={() => handleDiscard(selectedSlot)}
+                        className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] sm:text-[11px] px-2 py-0.5 rounded shadow flex items-center gap-0.5 animate-pulse"
+                        title="Seçili taşı sağ ıskartaya at"
+                      >
+                        <ArrowDown size={12} /> Taşı At
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSelectedSlot(null)}
+                      className="text-amber-400 hover:text-white text-[10px] px-1"
+                      title="Seçimi kaldır"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Bitti Button */}
+                {currentRoom.status === 'playing' && (
+                  <button 
+                    onClick={handleDeclareWin}
+                    disabled={!isMyTurn}
+                    className={`px-3 sm:px-4 py-1 text-[11px] sm:text-xs font-bold rounded-lg shadow flex items-center gap-1 transition-all ${
+                      isMyTurn 
+                        ? winCheckResult.canWin
+                          ? 'bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 ring-2 ring-yellow-300 animate-bounce cursor-pointer'
+                          : 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer'
+                        : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                    }`}
+                    title="14 taş per veya 7 çift olduğunda eli bitir"
                   >
-                    <ArrowDown size={12} /> Taşı At
+                    <Crown size={14} className={winCheckResult.canWin ? 'text-amber-900' : 'text-amber-300'} />
+                    Eli Bitir (Bitti!)
                   </button>
                 )}
-                <button
-                  onClick={() => setSelectedSlot(null)}
-                  className="text-amber-400 hover:text-white text-[10px] px-1"
-                  title="Seçimi kaldır"
-                >
-                  ✕
-                </button>
+              </div>
+            </div>
+
+            {/* The Istaka (Player Rack) - 2 rows x 15 slots, Tablet & Mobile Scaled */}
+            <div 
+              className="w-full max-w-4xl mx-auto z-10 origin-bottom pt-1 px-0.5 sm:px-1 select-none"
+              style={{ touchAction: 'none', overscrollBehavior: 'none' }}
+            >
+              <div className="bg-gradient-to-b from-[#7a3e14] via-[#5c2b09] to-[#381a04] p-1 sm:p-2 rounded-t-xl sm:rounded-t-2xl border-t-2 border-amber-600/80 shadow-2xl relative">
+                
+                {/* Top Row of Istaka */}
+                <div className="grid grid-cols-[repeat(15,minmax(0,1fr))] gap-0.5 sm:gap-1 pb-1 border-b border-[#381a04]">
+                  {rack.slice(0, 15).map((tile, idx) => (
+                    <RackSlot 
+                      key={idx}
+                      slotIndex={idx}
+                      tile={tile}
+                      isSelected={selectedSlot === idx}
+                      isTouchDragging={touchDragState?.slotIndex === idx && touchDragState.isDragging}
+                      okeyRef={currentRoom?.okeyTile}
+                      onClick={() => handleSlotClick(idx)}
+                      onDragStart={(e) => handleDragStart(e, idx)}
+                      onDragOver={handleDragOver}
+                      onDrop={(e) => handleDropOnSlot(e, idx)}
+                      onTouchStart={(e) => handleTouchStartSlot(e, idx)}
+                      onTouchMove={handleTouchMoveSlot}
+                      onTouchEnd={handleTouchEndSlot}
+                    />
+                  ))}
+                </div>
+
+                {/* Bottom Row of Istaka */}
+                <div className="grid grid-cols-[repeat(15,minmax(0,1fr))] gap-0.5 sm:gap-1 pt-1">
+                  {rack.slice(15, 30).map((tile, idx) => {
+                    const realIdx = idx + 15;
+                    return (
+                      <RackSlot 
+                        key={realIdx}
+                        slotIndex={realIdx}
+                        tile={tile}
+                        isSelected={selectedSlot === realIdx}
+                        isTouchDragging={touchDragState?.slotIndex === realIdx && touchDragState.isDragging}
+                        okeyRef={currentRoom?.okeyTile}
+                        onClick={() => handleSlotClick(realIdx)}
+                        onDragStart={(e) => handleDragStart(e, realIdx)}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDropOnSlot(e, realIdx)}
+                        onTouchStart={(e) => handleTouchStartSlot(e, realIdx)}
+                        onTouchMove={handleTouchMoveSlot}
+                        onTouchEnd={handleTouchEndSlot}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : (
+          /* SPECTATOR MODE FOOTER BAR (ISTAKA TAMAMEN GİZLENDİ) */
+          <div className="w-full max-w-4xl mx-auto z-20 bg-slate-900/90 border border-emerald-500/30 backdrop-blur-md rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-2.5">
+            {/* Bottom Player (Player 0) Card */}
+            {bottomPlayer && (
+              <div className={`p-2 rounded-xl border flex items-center gap-2.5 transition-all ${
+                currentTurnPlayer?.id === bottomPlayer.id
+                  ? 'bg-emerald-950/80 border-emerald-400 ring-2 ring-emerald-400/50 shadow-lg'
+                  : 'bg-black/40 border-slate-700/60'
+              }`}>
+                <div className="relative">
+                  <Avatar url={bottomPlayer.avatar || undefined} name={bottomPlayer.username} color={bottomPlayer.color || undefined} size={8} />
+                  {currentTurnPlayer?.id === bottomPlayer.id && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-emerald-400 rounded-full border border-slate-900 animate-ping"></span>
+                  )}
+                </div>
+                <div className="text-left">
+                  <div className="flex items-center gap-1">
+                    <span className="font-bold text-xs text-white max-w-[100px] truncate">{bottomPlayer.username}</span>
+                    {bottomPlayer.id === hostId && (
+                      <span title="Masa Yöneticisi (Host)">
+                        <Crown size={11} className="text-amber-400" />
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-emerald-300 font-semibold flex items-center gap-1">
+                    🀄 {bottomPlayer.tileCount} taş
+                    {currentTurnPlayer?.id === bottomPlayer.id && (
+                      <span className="text-emerald-400 font-bold ml-1 animate-pulse">• Sırada</span>
+                    )}
+                  </span>
+                </div>
+                {/* Last Discard Tile for Player 0 */}
+                {bottomPlayer.discardPile && bottomPlayer.discardPile.length > 0 && (
+                  <div className="flex flex-col items-center ml-1.5 pl-2 border-l border-slate-700">
+                    <span className="text-[8px] font-bold text-slate-400 mb-0.5">Son Atılan</span>
+                    <TileView tile={bottomPlayer.discardPile[bottomPlayer.discardPile.length - 1]} size="sm" />
+                  </div>
+                )}
               </div>
             )}
-          </div>
 
-          <div className="flex items-center gap-2">
-            {/* Bitti Button */}
-            {currentRoom.status === 'playing' && (
-              <button 
-                onClick={handleDeclareWin}
-                disabled={!isMyTurn}
-                className={`px-3 sm:px-4 py-1 text-[11px] sm:text-xs font-bold rounded-lg shadow flex items-center gap-1 transition-all ${
-                  isMyTurn 
-                    ? winCheckResult.canWin
-                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 ring-2 ring-yellow-300 animate-bounce cursor-pointer'
-                      : 'bg-amber-600 hover:bg-amber-700 text-white cursor-pointer'
-                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                }`}
-                title="14 taş per veya 7 çift olduğunda eli bitir"
-              >
-                <Crown size={14} className={winCheckResult.canWin ? 'text-amber-900' : 'text-amber-300'} />
-                Eli Bitir (Bitti!)
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* The Istaka (Player Rack) - 2 rows x 15 slots, Tablet & Mobile Scaled */}
-        <div 
-          className="w-full max-w-4xl mx-auto z-10 origin-bottom pt-1 px-0.5 sm:px-1 select-none"
-          style={{ touchAction: 'none', overscrollBehavior: 'none' }}
-        >
-          <div className="bg-gradient-to-b from-[#7a3e14] via-[#5c2b09] to-[#381a04] p-1 sm:p-2 rounded-t-xl sm:rounded-t-2xl border-t-2 border-amber-600/80 shadow-2xl relative">
-            
-            {/* Top Row of Istaka */}
-            <div className="grid grid-cols-[repeat(15,minmax(0,1fr))] gap-0.5 sm:gap-1 pb-1 border-b border-[#381a04]">
-              {rack.slice(0, 15).map((tile, idx) => (
-                <RackSlot 
-                  key={idx}
-                  slotIndex={idx}
-                  tile={tile}
-                  isSelected={selectedSlot === idx}
-                  isTouchDragging={touchDragState?.slotIndex === idx && touchDragState.isDragging}
-                  okeyRef={currentRoom?.okeyTile}
-                  onClick={() => handleSlotClick(idx)}
-                  onDragStart={(e) => handleDragStart(e, idx)}
-                  onDragOver={handleDragOver}
-                  onDrop={(e) => handleDropOnSlot(e, idx)}
-                  onTouchStart={(e) => handleTouchStartSlot(e, idx)}
-                  onTouchMove={handleTouchMoveSlot}
-                  onTouchEnd={handleTouchEndSlot}
-                />
-              ))}
-            </div>
-
-            {/* Bottom Row of Istaka */}
-            <div className="grid grid-cols-[repeat(15,minmax(0,1fr))] gap-0.5 sm:gap-1 pt-1">
-              {rack.slice(15, 30).map((tile, idx) => {
-                const realIdx = idx + 15;
-                return (
-                  <RackSlot 
-                    key={realIdx}
-                    slotIndex={realIdx}
-                    tile={tile}
-                    isSelected={selectedSlot === realIdx}
-                    isTouchDragging={touchDragState?.slotIndex === realIdx && touchDragState.isDragging}
-                    okeyRef={currentRoom?.okeyTile}
-                    onClick={() => handleSlotClick(realIdx)}
-                    onDragStart={(e) => handleDragStart(e, realIdx)}
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDropOnSlot(e, realIdx)}
-                    onTouchStart={(e) => handleTouchStartSlot(e, realIdx)}
-                    onTouchMove={handleTouchMoveSlot}
-                    onTouchEnd={handleTouchEndSlot}
-                  />
-                );
-              })}
+            {/* Spectator Status Badge & Action Ticker */}
+            <div className="flex flex-col items-center sm:items-end gap-1">
+              <div className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-full text-xs font-bold shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                <span>👁️ İzleyici Modu (Canlı Masa)</span>
+              </div>
+              <p className="text-[10px] text-slate-400 max-w-xs text-center sm:text-right truncate">
+                {currentRoom.lastActionMessage || "Oyuncuların gizli taşları güvenlik gereği gizlidir."}
+              </p>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Touch Drag Floating Preview */}
         {touchDragState?.isDragging && touchDragState.tile && (

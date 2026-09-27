@@ -159,7 +159,15 @@ export default function Games({
         setActiveTables(tables);
         setBlackjackRoomCount(tables.filter(t => t.gameType === 'blackjack').length);
         setBatakRoomCount(tables.filter(t => t.gameType === 'batak').length);
+        setOkeyRoomCount(tables.filter(t => t.gameType === 'okey').length);
+        setOkey101RoomCount(tables.filter(t => t.gameType === 'okey101').length);
+        setUnoRoomCount(tables.filter(t => t.gameType === 'uno').length);
+        setDrawguessRoomCount(tables.filter(t => t.gameType === 'drawguess').length);
       }
+    };
+
+    const onTableChange = () => {
+      socket.emit("get_active_tables", (tables: CardTableInfo[]) => onActiveTables(tables));
     };
 
     socket.on("okey_rooms_list", onOkeyRooms);
@@ -167,6 +175,9 @@ export default function Games({
     socket.on("uno_rooms_list", onUnoRooms);
     socket.on("drawguess_rooms_list", onDrawGuessRooms);
     socket.on("active_tables_updated", onActiveTables);
+    socket.on("table:created", onTableChange);
+    socket.on("table:updated", onTableChange);
+    socket.on("table:deleted", onTableChange);
 
     socket.emit("get_okey_rooms");
     socket.emit("get_okey101_rooms");
@@ -190,6 +201,9 @@ export default function Games({
       socket.off("uno_rooms_list", onUnoRooms);
       socket.off("drawguess_rooms_list", onDrawGuessRooms);
       socket.off("active_tables_updated", onActiveTables);
+      socket.off("table:created", onTableChange);
+      socket.off("table:updated", onTableChange);
+      socket.off("table:deleted", onTableChange);
     };
   }, [socket]);
 
@@ -588,36 +602,62 @@ export default function Games({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {activeTables.map((t) => (
-                <div
-                  key={t.id}
-                  className="p-3 rounded-2xl bg-black/40 border border-emerald-500/20 flex items-center justify-between gap-3 hover:border-emerald-500/50 transition-all"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="text-2xl">{t.gameType === 'blackjack' ? '🃏' : '♠️'}</span>
-                    <div className="min-w-0">
-                      <h4 className="text-xs font-black text-white truncate">{t.title}</h4>
-                      <p className="text-[10px] text-slate-400">
-                        Host: {t.hostName} • {t.playerCount}/{t.maxPlayers} Oyuncu ({t.botCount} Bot)
-                      </p>
-                    </div>
-                  </div>
+              {activeTables.map((t) => {
+                const gameMeta = 
+                  t.gameType === 'okey' ? { icon: '🀄', label: 'Klasik Okey', badge: 'bg-emerald-500/20 text-emerald-300' } :
+                  t.gameType === 'okey101' ? { icon: '💯', label: '101 Okey', badge: 'bg-amber-500/20 text-amber-300' } :
+                  t.gameType === 'uno' ? { icon: '🎴', label: 'UNO', badge: 'bg-rose-500/20 text-rose-300' } :
+                  t.gameType === 'blackjack' ? { icon: '🃏', label: 'Blackjack 21', badge: 'bg-yellow-500/20 text-yellow-300' } :
+                  t.gameType === 'batak' ? { icon: '♠️', label: 'Batak', badge: 'bg-teal-500/20 text-teal-300' } :
+                  t.gameType === 'drawguess' ? { icon: '🎨', label: 'Çiz Bakalım', badge: 'bg-fuchsia-500/20 text-fuchsia-300' } :
+                  { icon: '🎮', label: 'Oyun', badge: 'bg-blue-500/20 text-blue-300' };
 
-                  <button
-                    onClick={() => {
-                      setBlackjackTableOptions(null);
-                      setSelectedGameTableId(t.id);
-                      if (socket && socket.connected) {
-                        socket.emit('join_table', { tableId: t.id, gameType: t.gameType });
-                      }
-                      setSelectedGame(t.gameType === 'poker' ? 'blackjack' : (t.gameType as SelectedGameType));
-                    }}
-                    className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-md shrink-0 cursor-pointer transition-all transform hover:scale-105 active:scale-95"
+                return (
+                  <div
+                    key={t.id}
+                    className="p-3 rounded-2xl bg-black/40 border border-emerald-500/20 flex items-center justify-between gap-3 hover:border-emerald-500/50 transition-all shadow-sm"
                   >
-                    Masaya Katıl
-                  </button>
-                </div>
-              ))}
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-xl shrink-0 shadow-inner">
+                        {gameMeta.icon}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <h4 className="text-xs font-black text-white truncate">{t.title}</h4>
+                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded-md ${gameMeta.badge}`}>
+                            {gameMeta.label}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Kurucu: <span className="text-slate-300 font-semibold">{t.hostName}</span> • {t.playerCount}/{t.maxPlayers} Oyuncu {t.botCount > 0 ? `(${t.botCount} Bot)` : ''} • <span className={t.status === 'Oyunda' ? 'text-amber-400 font-bold' : 'text-emerald-400'}>{t.status}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setBlackjackTableOptions(null);
+                        setSelectedGameTableId(t.id);
+                        if (socket && socket.connected) {
+                          socket.emit('join_table', { tableId: t.id, gameType: t.gameType });
+                        }
+                        const targetRoute: SelectedGameType = 
+                          t.gameType === 'poker' ? 'blackjack' :
+                          t.gameType === 'okey101' ? 'okey101' :
+                          t.gameType === 'okey' ? 'okey' :
+                          t.gameType === 'uno' ? 'uno' :
+                          t.gameType === 'batak' ? 'batak' :
+                          t.gameType === 'drawguess' ? 'drawguess' :
+                          'blackjack';
+                        setSelectedGame(targetRoute);
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-md shrink-0 cursor-pointer transition-all transform hover:scale-105 active:scale-95"
+                    >
+                      Masaya Katıl
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
