@@ -113,6 +113,36 @@ export default function Games({
     };
   }, [socket, leaderboardTab]);
 
+  // Android Hardware Back Button integration for Games
+  useEffect(() => {
+    const handleBack = (e: any) => {
+      if (showKvkkModal) {
+        setShowKvkkModal(false);
+        if (e.detail) e.detail.handled = true;
+        return;
+      }
+      if (showAdminChipsModal) {
+        setShowAdminChipsModal(false);
+        if (e.detail) e.detail.handled = true;
+        return;
+      }
+      if (lobbyModalGame) {
+        setLobbyModalGame(null);
+        if (e.detail) e.detail.handled = true;
+        return;
+      }
+      if (selectedGame !== 'hub') {
+        setSelectedGame('hub');
+        if (e.detail) e.detail.handled = true;
+        return;
+      }
+    };
+    window.addEventListener("kaps:hardware_back", handleBack);
+    return () => {
+      window.removeEventListener("kaps:hardware_back", handleBack);
+    };
+  }, [showKvkkModal, showAdminChipsModal, lobbyModalGame, selectedGame]);
+
   // Auto-detect room events on mount
   useEffect(() => {
     if (!socket) return;

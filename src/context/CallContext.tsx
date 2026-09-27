@@ -274,9 +274,12 @@ export const CallProvider: React.FC<{
       // If we are the caller, we initiate the WebRTC Offer
       if (currentCall && currentCall.isCaller) {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((err) => {
+            console.warn("Microphone permission denied or unavailable:", err);
+            return null;
+          });
           if (!stream) {
-            onShowToast?.("Mikrofon izni verilmedi. Arama gerçekleştirilemiyor.", "error");
+            onShowToast?.("Lütfen uygulama ayarlarından KapsApp'e mikrofon izni verin.", "error");
             endCall();
             return;
           }
@@ -346,9 +349,12 @@ export const CallProvider: React.FC<{
       setCallState('connecting');
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch((err) => {
+          console.warn("Microphone permission denied or unavailable:", err);
+          return null;
+        });
         if (!stream) {
-          onShowToast?.("Mikrofon izni verilmedi. Konuşma başlatılamıyor.", "error");
+          onShowToast?.("Lütfen uygulama ayarlarından KapsApp'e mikrofon izni verin.", "error");
           endCall();
           return;
         }

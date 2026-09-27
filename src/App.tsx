@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { io, Socket } from "socket.io-client";
+import { App as CapApp } from "@capacitor/app";
 import { MessageSquare, LayoutGrid, Users, UserCircle2, Globe, Bell, Folder, Moon, Sun, Gamepad2, Radio, MapPin, Megaphone, Crown, CalendarDays } from "lucide-react";
 import Auth from "./components/Auth";
 import Feed from "./components/Feed";
@@ -227,6 +228,8 @@ export default function App() {
       const hwFingerprint = getCachedHardwareFingerprint();
       const socketOptions = { 
         path: "/socket.io",
+        transports: ["websocket", "polling"],
+        autoConnect: true,
         auth: { token, deviceId: hwFingerprint, hardwareFingerprint: hwFingerprint },
         reconnection: true,
         reconnectionAttempts: Infinity,
@@ -234,7 +237,7 @@ export default function App() {
         reconnectionDelayMax: 5000,
         timeout: 20000
       };
-      const newSocket = socketUrl ? io(socketUrl, socketOptions) : io(socketOptions);
+      const newSocket = io(socketUrl, socketOptions);
       
       const onConnect = () => {
         setSocket(newSocket);
@@ -518,6 +521,95 @@ export default function App() {
     setActiveTab("profile");
   };
 
+  // Android Hardware / Software Back Button Handler
+  const lastBackPressRef = useRef<number>(0);
+
+  useEffect(() => {
+    let capListener: any = null;
+
+    const handleHardwareBack = () => {
+      // 1. Dispatch custom event for child components & active modals (e.g. Chat active thread, Game rooms, KVKK, Chip manager, etc.)
+      const backEvt = new CustomEvent("kaps:hardware_back", {
+        cancelable: true,
+        detail: { handled: false }
+      });
+      window.dispatchEvent(backEvt);
+
+      if (backEvt.detail?.handled) {
+        return;
+      }
+
+      // 2. Check if top-level Announcement Modal is open
+      if (activeAnnouncementModal) {
+        localStorage.setItem("latest_read_announcement_id", String(activeAnnouncementModal.id));
+        setHasUnreadAnnouncement(false);
+        setActiveAnnouncementModal(null);
+        return;
+      }
+
+      // 3. Check if inside a Subject / Folder view
+      if (activeSubject) {
+        setActiveSubject(null);
+        setActiveTab("folders");
+        return;
+      }
+
+      // 4. Check if viewing another user's profile
+      if (activeTab === "profile" && viewingUserId !== currentUserId) {
+        setViewingUserId(currentUserId);
+        return;
+      }
+
+      // 5. If not on main 'chats' tab, return to main tab
+      if (activeTab !== "chats") {
+        setActiveTab("chats");
+        return;
+      }
+
+      // 6. On root / main tab: Double press within 2000ms to exit app
+      const now = Date.now();
+      if (now - lastBackPressRef.current < 2000) {
+        try {
+          CapApp.exitApp();
+        } catch (e) {
+          // In browser environment, exitApp is a safe no-op
+        }
+      } else {
+        lastBackPressRef.current = now;
+        addToast({
+          type: "system_info",
+          title: "KapsApp",
+          text: "Uygulamadan çıkmak için tekrar dokunun."
+        });
+      }
+    };
+
+    // Listen on Capacitor App backButton event
+    try {
+      CapApp.addListener("backButton", () => {
+        handleHardwareBack();
+      }).then((handle) => {
+        capListener = handle;
+      }).catch(() => {});
+    } catch (e) {}
+
+    // Listen on window popstate for standard web/PWA/browser back navigation
+    const onPopState = (e: PopStateEvent) => {
+      e.preventDefault();
+      handleHardwareBack();
+      window.history.pushState(null, "", window.location.href);
+    };
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", onPopState);
+
+    return () => {
+      if (capListener && typeof capListener.remove === "function") {
+        capListener.remove();
+      }
+      window.removeEventListener("popstate", onPopState);
+    };
+  }, [activeAnnouncementModal, activeSubject, activeTab, currentUserId, viewingUserId]);
+
   const isEmirgan = (username || "").trim().toLowerCase() === "emirgan";
 
   return (
@@ -536,7 +628,7 @@ export default function App() {
         });
       }}
     >
-      <div className="flex flex-col md:flex-row h-[100dvh] w-full max-w-[100vw] bg-white dark:bg-slate-900 md:bg-slate-50 md:dark:bg-slate-950 overflow-hidden font-sans transition-colors duration-200">
+      <div className="flex flex-col md:flex-row h-[100dvh] w-full max-w-[100vw] bg-white dark:bg-slate-900 md:bg-slate-50 md:dark:bg-slate-950 overflow-hidden font-sans transition-colors duration-200 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
       {/* Semantic Top Heading for Search Crawlers & Accessibility */}
       <h1 className="sr-only">KapsApp - Canlı Harita ve Çevrimiçi Oyun Platformu</h1>
 

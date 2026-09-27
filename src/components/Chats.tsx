@@ -58,6 +58,22 @@ export default function Chats({
     }
   }, [activeChat, activeTab, onActiveChatUserChange]);
 
+  // Android Hardware Back Button integration to exit active DM chat
+  useEffect(() => {
+    const handleBack = (e: any) => {
+      if (activeChatRef.current) {
+        setActiveChat(null);
+        if (e.detail) {
+          e.detail.handled = true;
+        }
+      }
+    };
+    window.addEventListener("kaps:hardware_back", handleBack);
+    return () => {
+      window.removeEventListener("kaps:hardware_back", handleBack);
+    };
+  }, []);
+
   useEffect(() => {
     if (!targetUserId || !socket) return;
     setActiveTab("friends");

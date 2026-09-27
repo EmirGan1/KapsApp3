@@ -2,22 +2,39 @@ class CallSoundEngine {
   private ctx: AudioContext | null = null;
   private intervalId: any = null;
 
-  initContext() {
+  initContext(): AudioContext | null {
     if (!this.ctx && typeof window !== 'undefined') {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      this.ctx = new AudioCtx();
+      if (AudioCtx) {
+        this.ctx = new AudioCtx();
+      }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
+    return this.ctx;
+  }
+
+  // Ensure AudioContext is resumed before playing any procedural tones
+  private async ensureActiveContext(): Promise<boolean> {
+    this.initContext();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      try {
+        await this.ctx.resume();
+      } catch (e) {
+        // Ignore silent resume rejection
+      }
+    }
+    return !!this.ctx;
   }
 
   // ARANAN KİŞİ İÇİN YUMUŞAK GELEN ARAMA ZİL SESİ (2.2 saniyede bir tekrarlayan melodik chime)
-  startIncomingRing() {
+  async startIncomingRing() {
     this.stopAll();
-    this.initContext();
+    await this.ensureActiveContext();
 
     const playChime = () => {
+      this.ensureActiveContext();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
       const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6 (Yumuşak Majör Akor)
@@ -54,11 +71,12 @@ class CallSoundEngine {
   }
 
   // ARAYAN KİŞİ İÇİN ÇALDIRMA SESİ (Yumuşak "Dıııt... Dıııt..." tonu)
-  startOutgoingDialTone() {
+  async startOutgoingDialTone() {
     this.stopAll();
-    this.initContext();
+    await this.ensureActiveContext();
 
     const playTone = () => {
+      this.ensureActiveContext();
       if (!this.ctx) return;
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -84,9 +102,9 @@ class CallSoundEngine {
   }
 
   // BAĞLANTI BAŞARILI TONU (Call connected chime)
-  playConnectTone() {
+  async playConnectTone() {
     this.stopAll();
-    this.initContext();
+    await this.ensureActiveContext();
     if (!this.ctx) return;
 
     const now = this.ctx.currentTime;
@@ -111,9 +129,9 @@ class CallSoundEngine {
   }
 
   // BAĞLANTI KAPANMA TONU (Call ended tone)
-  playDisconnectTone() {
+  async playDisconnectTone() {
     this.stopAll();
-    this.initContext();
+    await this.ensureActiveContext();
     if (!this.ctx) return;
 
     const now = this.ctx.currentTime;

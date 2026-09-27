@@ -1,26 +1,40 @@
 import { getCachedHardwareFingerprint, getHardwareFingerprint } from "./deviceFingerprint";
 
-// Frontend API & WebSocket Configuration (VDS / KapsApp Architecture Standard)
-export const BACKEND_URL = (
+// Detect if running in local dev, Capacitor webview, or native container
+const isLocal = typeof window !== "undefined" && (
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1" ||
+  window.location.hostname.endsWith(".localhost") ||
+  window.location.protocol === "file:" ||
+  window.location.protocol === "capacitor:" ||
+  window.location.protocol === "ionic:"
+);
+
+const isHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
+
+// Frontend API & WebSocket Absolute Address Guarantee (Capacitor / Android WebView / Web)
+export const BASE_URL = (
   (import.meta.env.VITE_BACKEND_URL as string | undefined) ||
   (import.meta.env.VITE_API_URL as string | undefined) ||
-  ""
+  (isHttp && !isLocal ? window.location.origin : "https://kapsapp.online")
 ).replace(/\/$/, "");
 
+export const BACKEND_URL = BASE_URL;
+
 /**
- * Returns relative or absolute API URL
+ * Returns absolute API URL
  */
 export function getApiUrl(path: string = ""): string {
-  if (!path) return BACKEND_URL || "";
+  if (!path) return BASE_URL;
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  return BACKEND_URL ? `${BACKEND_URL}${cleanPath}` : cleanPath;
+  return `${BASE_URL}${cleanPath}`;
 }
 
 /**
  * Returns Socket.IO URL
  */
-export function getSocketUrl(): string | undefined {
-  return BACKEND_URL || undefined;
+export function getSocketUrl(): string {
+  return BASE_URL || "https://kapsapp.online";
 }
 
 /**
