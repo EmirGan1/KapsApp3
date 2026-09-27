@@ -205,7 +205,11 @@ export default function Games({
         username={username}
         avatar={avatar}
         color={color}
-        onBackToHub={() => setSelectedGame('hub')}
+        targetRoomId={selectedGameTableId}
+        onBackToHub={() => {
+          setSelectedGame('hub');
+          setSelectedGameTableId(null);
+        }}
       />
     );
   }
@@ -219,7 +223,11 @@ export default function Games({
         username={username}
         avatar={avatar}
         color={color}
-        onBackToHub={() => setSelectedGame('hub')}
+        targetRoomId={selectedGameTableId}
+        onBackToHub={() => {
+          setSelectedGame('hub');
+          setSelectedGameTableId(null);
+        }}
       />
     );
   }
@@ -233,7 +241,11 @@ export default function Games({
         username={username}
         avatar={avatar}
         color={color}
-        onBackToHub={() => setSelectedGame('hub')}
+        targetRoomId={selectedGameTableId || undefined}
+        onBackToHub={() => {
+          setSelectedGame('hub');
+          setSelectedGameTableId(null);
+        }}
       />
     );
   }
@@ -592,10 +604,17 @@ export default function Games({
                   </div>
 
                   <button
-                    onClick={() => setSelectedGame(t.gameType)}
+                    onClick={() => {
+                      setBlackjackTableOptions(null);
+                      setSelectedGameTableId(t.id);
+                      if (socket && socket.connected) {
+                        socket.emit('join_table', { tableId: t.id, gameType: t.gameType });
+                      }
+                      setSelectedGame(t.gameType === 'poker' ? 'blackjack' : (t.gameType as SelectedGameType));
+                    }}
                     className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-md shrink-0 cursor-pointer transition-all transform hover:scale-105 active:scale-95"
                   >
-                    Masaya Otur
+                    Masaya Katıl
                   </button>
                 </div>
               ))}
@@ -983,7 +1002,11 @@ export default function Games({
             setLobbyModalGame(null);
           }}
           onJoinTable={(tableId) => {
+            setBlackjackTableOptions(null);
             setSelectedGameTableId(tableId);
+            if (socket && socket.connected && lobbyModalGame) {
+              socket.emit('join_table', { tableId, gameType: lobbyModalGame });
+            }
             setSelectedGame(lobbyModalGame === 'poker' ? 'blackjack' : lobbyModalGame);
             setLobbyModalGame(null);
           }}

@@ -21,6 +21,7 @@ interface UnoGameProps {
   username: string;
   avatar?: string | null;
   color?: string | null;
+  targetRoomId?: string | null;
   onBackToHub: () => void;
 }
 
@@ -30,6 +31,7 @@ export default function UnoGame({
   username, 
   avatar, 
   color,
+  targetRoomId,
   onBackToHub 
 }: UnoGameProps) {
   const [rooms, setRooms] = useState<any[]>([]);
@@ -49,6 +51,13 @@ export default function UnoGame({
 
   // Double click tracker for mobile/desktop
   const lastClickRef = useRef<{ cardId: string; time: number }>({ cardId: '', time: 0 });
+
+  // Direct join on targetRoomId
+  useEffect(() => {
+    if (socket && targetRoomId) {
+      socket.emit("uno_join_room", targetRoomId);
+    }
+  }, [socket, targetRoomId]);
 
   // Socket setup
   useEffect(() => {
@@ -74,12 +83,25 @@ export default function UnoGame({
       setErrorMessage(msg);
       setTimeout(() => setErrorMessage(null), 3000);
     };
+    const onSpectatorMode = (data: { message?: string }) => {
+      setInfoMessage(data.message || "İzleyici modundasınız.");
+    };
+    const onPromoted = (data: { message?: string }) => {
+      setInfoMessage(data.message || "Yeni tur başladı, masaya dahil edildiniz!");
+    };
+    const onTableClosed = (data?: { reason?: string }) => {
+      setErrorMessage(data?.reason || "Masa yönetici tarafından kapatıldı.");
+      setTimeout(() => onBackToHub(), 1500);
+    };
 
     socket.on("uno_rooms_list", onRoomsList);
     socket.on("uno_room_created", onRoomCreated);
     socket.on("uno_state", onRoomState);
     socket.on("uno_hand", onHand);
     socket.on("uno_error", onError);
+    socket.on("uno_spectator_mode", onSpectatorMode);
+    socket.on("uno_promoted_to_player", onPromoted);
+    socket.on("table_closed", onTableClosed);
 
     return () => {
       socket.off("uno_rooms_list", onRoomsList);
@@ -87,8 +109,11 @@ export default function UnoGame({
       socket.off("uno_state", onRoomState);
       socket.off("uno_hand", onHand);
       socket.off("uno_error", onError);
+      socket.off("uno_spectator_mode", onSpectatorMode);
+      socket.off("uno_promoted_to_player", onPromoted);
+      socket.off("table_closed", onTableClosed);
     };
-  }, [socket]);
+  }, [socket, onBackToHub]);
 
   // Handle card click (tap once to select, double tap to play)
   const handleCardClick = (card: UnoCard) => {
@@ -370,14 +395,13 @@ export default function UnoGame({
                     </div>
                     <button 
                       onClick={() => joinRoom(room.id)}
-                      disabled={room.players >= 4 && room.status !== 'playing'}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                        room.players >= 4 && room.status !== 'playing' 
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed' 
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                        room.status === 'playing'
+                          ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-md shadow-amber-900/20'
                           : 'bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-900/20'
                       }`}
                     >
-                      Masaya Otur
+                      {room.status === 'playing' ? '👁️ İzle (Sıraya Gir)' : 'Masaya Otur'}
                     </button>
                   </div>
                 ))
@@ -393,8 +417,12 @@ export default function UnoGame({
   // --- TABLE VIEW (WAITING OR PLAYING) ---
   const myPlayerIdx = currentRoom.players.findIndex(p => p.id === currentUserId);
   const myPlayer = myPlayerIdx !== -1 ? currentRoom.players[myPlayerIdx] : null;
+  const isSpectator = Boolean(
+    !myPlayer &&
+    (currentRoom.spectators?.some(s => s.id === currentUserId) || currentRoom.status === 'playing')
+  );
   const isHost = currentRoom.hostId === currentUserId;
-  const isMyTurn = currentRoom.status === 'playing' && currentRoom.players[currentRoom.currentTurn]?.id === currentUserId;
+  const isMyTurn = !isSpectator && currentRoom.status === 'playing' && currentRoom.players[currentRoom.currentTurn]?.id === currentUserId;
   const currentTurnPlayer = currentRoom.players[currentRoom.currentTurn];
 
   return (
@@ -407,6 +435,17 @@ export default function UnoGame({
       {errorMessage && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-rose-600 text-white text-xs sm:text-sm font-semibold px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 backdrop-blur-md animate-bounce border border-rose-400">
           <AlertCircle size={16} /> {errorMessage}
+        </div>
+      )}
+
+      {/* Spectator Notice Banner */}
+      {isSpectator && (
+        <div className="bg-gradient-to-r from-amber-600/90 to-yellow-600/90 text-white px-3 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-black flex items-center justify-between shadow-md shrink-0 border-b border-amber-400/40 z-30">
+          <div className="flex items-center gap-2">
+            <span className="text-sm sm:text-base">👁️</span>
+            <span>Canlı İzleyici Modu: Masayı izliyorsunuz. Mevcut el bitince sıradaki tura otomatik olarak oyuncu olarak başlayacaksınız!</span>
+          </div>
+          <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-bold shrink-0">Sırada Bekleniyor</span>
         </div>
       )}
 

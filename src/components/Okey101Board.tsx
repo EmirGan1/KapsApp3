@@ -29,6 +29,7 @@ export default function Okey101Board({
   username,
   avatar,
   color,
+  targetRoomId,
   onBackToHub,
   onRoomStateChange
 }: {
@@ -37,11 +38,32 @@ export default function Okey101Board({
   username: string;
   avatar?: string | null;
   color?: string | null;
+  targetRoomId?: string | null;
   onBackToHub?: () => void;
   onRoomStateChange?: (inRoom: boolean) => void;
 }) {
   const [rooms, setRooms] = useState<any[]>([]);
   const [currentRoom, setCurrentRoom] = useState<Okey101RoomState | null>(null);
+
+  // Auto join targetRoomId on mount
+  useEffect(() => {
+    if (socket && targetRoomId) {
+      socket.emit("join_okey101", targetRoomId);
+    }
+  }, [socket, targetRoomId]);
+
+  // Handle table_closed event
+  useEffect(() => {
+    if (!socket) return;
+    const onTableClosed = (data?: { reason?: string }) => {
+      setErrorMessage(data?.reason || "Masa kapatıldı.");
+      setTimeout(() => onBackToHub?.(), 1500);
+    };
+    socket.on("table_closed", onTableClosed);
+    return () => {
+      socket.off("table_closed", onTableClosed);
+    };
+  }, [socket, onBackToHub]);
   const [isCreating, setIsCreating] = useState(false);
   const [newRoomName, setNewRoomName] = useState('101 Okey Masası');
   const [newRoomSubMode, setNewRoomSubMode] = useState<'katlamali' | 'duz'>('katlamali');
@@ -1065,9 +1087,11 @@ export default function Okey101Board({
                     </span>
                     <button
                       onClick={() => handleJoinRoom(room.id)}
-                      className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium rounded-xl transition-all flex items-center gap-1.5"
+                      className={`px-4 py-1.5 ${
+                        room.status === 'playing' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'
+                      } text-white text-sm font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-md cursor-pointer`}
                     >
-                      <span>Masaya Gir</span>
+                      <span>{room.status === 'playing' ? '👁️ İzle (Sıraya Gir)' : 'Masaya Gir'}</span>
                       <ChevronRight size={16} />
                     </button>
                   </div>
@@ -1081,6 +1105,10 @@ export default function Okey101Board({
   }
 
   // --- ACTIVE GAME TABLE VIEW ---
+  const isSpectator = Boolean(
+    currentRoom &&
+    !currentRoom.players.some(p => p.id === currentUserId)
+  );
 
   const prevPlayerIdx = (currentRoom.currentTurn + currentRoom.players.length - 1) % currentRoom.players.length;
   const prevPlayer = currentRoom.players[prevPlayerIdx];
@@ -1100,6 +1128,17 @@ export default function Okey101Board({
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-amber-600 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-2 text-sm font-semibold">
           <Sparkles size={18} />
           <span>{infoMessage}</span>
+        </div>
+      )}
+
+      {/* Spectator Notice Banner */}
+      {isSpectator && (
+        <div className="bg-gradient-to-r from-amber-600/90 to-yellow-600/90 text-white px-3 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-black flex items-center justify-between shadow-md shrink-0 border-b border-amber-400/40 z-30">
+          <div className="flex items-center gap-2">
+            <span className="text-sm sm:text-base">👁️</span>
+            <span>Canlı İzleyici Modu: Masayı izliyorsunuz. Mevcut el bitince sıradaki tura otomatik olarak oyuncu olarak başlayacaksınız!</span>
+          </div>
+          <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-bold shrink-0">Sırada Bekleniyor</span>
         </div>
       )}
 

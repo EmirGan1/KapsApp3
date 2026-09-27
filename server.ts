@@ -1588,6 +1588,8 @@ async function startServer() {
   }
 
   const activeCardTablesRegistry = new Map<string, CardTableRegistryItem>();
+  const blackjackRooms = new Map<string, any>();
+  let closeAnyTableAndNotify: (tableId: string) => boolean;
 
   const broadcastActiveTables = () => {
     const list = Array.from(activeCardTablesRegistry.values());
@@ -1923,12 +1925,28 @@ async function startServer() {
   app.delete(["/api/admin/tables/:id", "/api/admin/active-tables/:id"], requireEmirganAdmin, async (req, res) => {
     try {
       const tableId = String(req.params.id);
-      if (activeCardTablesRegistry.has(tableId)) {
+      if (typeof closeAnyTableAndNotify === 'function') {
+        closeAnyTableAndNotify(tableId);
+      } else {
         activeCardTablesRegistry.delete(tableId);
         broadcastActiveTables();
-        return res.json({ success: true, message: `Masa ${tableId} başarıyla kapatıldı.` });
       }
-      return res.status(404).json({ error: "Masa bulunamadı." });
+      return res.json({ success: true, message: `Masa ${tableId} başarıyla kapatıldı ve oyuncular lobiye yönlendirildi.` });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post(["/api/admin/tables/:id/close", "/api/admin/tables/:id/delete"], requireEmirganAdmin, async (req, res) => {
+    try {
+      const tableId = String(req.params.id);
+      if (typeof closeAnyTableAndNotify === 'function') {
+        closeAnyTableAndNotify(tableId);
+      } else {
+        activeCardTablesRegistry.delete(tableId);
+        broadcastActiveTables();
+      }
+      return res.json({ success: true, message: `Masa ${tableId} başarıyla kapatıldı ve oyuncular lobiye yönlendirildi.` });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -2633,6 +2651,23 @@ async function startServer() {
     return false;
   };
 
+  const emitAllOkeyRooms = () => {
+    for (const [sId, s] of io.sockets.sockets.entries()) {
+      const u = (s as any).data?.user;
+      const filtered = Array.from(okeyRooms.entries())
+        .filter(([_, room]) => isUserAllowedInRoom(room, u))
+        .map(([id, room]) => ({
+          id,
+          name: room.name,
+          gameMode: room.gameMode,
+          players: room.players.length,
+          status: room.status,
+          isHidden: !!room.isHidden
+        }));
+      s.emit("okey_rooms_list", filtered);
+    }
+  };
+
   const getSanitizedRoom = (room: any) => {
     return {
       id: room.id,
@@ -2660,7 +2695,13 @@ async function startServer() {
       turnPhase: room.turnPhase || 'draw',
       winnerId: room.winnerId,
       winningReason: room.winningReason,
-      lastActionMessage: room.lastActionMessage
+      lastActionMessage: room.lastActionMessage,
+      spectators: Array.isArray(room.spectators) ? room.spectators.map((s: any) => ({
+        id: s.id,
+        username: s.username,
+        avatar: s.avatar,
+        color: s.color
+      })) : []
     };
   };
 
@@ -2790,7 +2831,13 @@ async function startServer() {
       currentTurn: room.currentTurn || 0,
       winnerId: room.winnerId,
       lastActionMessage: room.lastActionMessage,
-      discardPileCount: room.discardPile ? room.discardPile.length : 0
+      discardPileCount: room.discardPile ? room.discardPile.length : 0,
+      spectators: Array.isArray(room.spectators) ? room.spectators.map((s: any) => ({
+        id: s.id,
+        username: s.username,
+        avatar: s.avatar,
+        color: s.color
+      })) : []
     };
   };
 
@@ -3094,7 +3141,13 @@ async function startServer() {
       roundNumber: room.roundNumber || 1,
       winnerId: room.winnerId,
       winningReason: room.winningReason,
-      lastActionMessage: room.lastActionMessage
+      lastActionMessage: room.lastActionMessage,
+      spectators: Array.isArray(room.spectators) ? room.spectators.map((s: any) => ({
+        id: s.id,
+        username: s.username,
+        avatar: s.avatar,
+        color: s.color
+      })) : []
     };
   };
 
@@ -3414,10 +3467,106 @@ async function startServer() {
     okey101Rooms.delete(roomId);
   };
 
+  closeAnyTableAndNotify = (tableId: string): boolean => {
+    const tid = String(tableId);
+
+    // 1. Blackjack & Batak & activeCardTablesRegistry
+    if (activeCardTablesRegistry.has(tid)) {
+      activeCardTablesRegistry.delete(tid);
+    }
+    if (blackjackRooms.has(tid)) {
+      blackjackRooms.delete(tid);
+    }
+    io.to(`blackjack_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+    io.to(`batak_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+    io.to(tid).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+
+    // 2. Classic Okey
+    if (okeyRooms.has(tid)) {
+      io.to(`okey_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+      io.to(tid).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+      okeyRooms.delete(tid);
+      emitAllOkeyRooms();
+    }
+
+    // 3. Okey 101
+    if (okey101Rooms.has(tid)) {
+      io.to(`okey101_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+      io.to(tid).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+      cleanup101Room(tid);
+      okey101Rooms.delete(tid);
+      emit101RoomsList();
+    }
+
+    // 4. UNO
+    if (unoRooms.has(tid)) {
+      io.to(`uno_${tid}`).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+      io.to(tid).emit("table_closed", { tableId: tid, reason: "Masa Emirgan Yönetici tarafından kapatıldı.", redirectTo: "lobby" });
+      unoRooms.delete(tid);
+      emitUnoRoomsList();
+    }
+
+    broadcastActiveTables();
+    io.emit("table_deleted", { tableId: tid });
+    return true;
+  };
+
   const start101GameSession = (roomId: string) => {
     const room = okey101Rooms.get(roomId);
     if (!room) return false;
     if (room.status === 'playing') return true;
+
+    // Promote waiting spectators into game if available
+    if (Array.isArray(room.spectators) && room.spectators.length > 0) {
+      // First replace any existing bots with spectators
+      for (let i = 0; i < room.players.length && room.spectators.length > 0; i++) {
+        if (room.players[i].isBot) {
+          const spec = room.spectators.shift();
+          room.players[i] = {
+            id: spec.id,
+            username: spec.username,
+            avatar: spec.avatar,
+            color: spec.color,
+            isBot: false,
+            socketId: spec.socketId,
+            hand: [],
+            discardPile: [],
+            hasOpened: false,
+            openedMode: undefined,
+            openedScore: 0,
+            openedMeldsCount: 0,
+            penalties: 0,
+            roundPenalty: 0
+          };
+          if (spec.socketId) {
+            io.to(spec.socketId).emit("okey101_promoted_to_player", { message: "Yeni tur başladı! Masaya oyuncu olarak dahil edildiniz." });
+          }
+        }
+      }
+      // Then fill up to 4 if players < 4
+      while (room.players.length < 4 && room.spectators.length > 0) {
+        const spec = room.spectators.shift();
+        room.players.push({
+          id: spec.id,
+          username: spec.username,
+          avatar: spec.avatar,
+          color: spec.color,
+          isBot: false,
+          socketId: spec.socketId,
+          hand: [],
+          discardPile: [],
+          hasOpened: false,
+          openedMode: undefined,
+          openedScore: 0,
+          openedMeldsCount: 0,
+          penalties: 0,
+          roundPenalty: 0
+        });
+        if (spec.socketId) {
+          io.to(spec.socketId).emit("okey101_promoted_to_player", { message: "Yeni tur başladı! Masaya oyuncu olarak dahil edildiniz." });
+        }
+      }
+    }
 
     // 101 Okey 4 oyuncuyla oynanır. Eksik koltukları otomatik akıllı botlarla 4'e tamamla
     const botNamePool = ["Ahmet (Bot)", "Zeynep (Bot)", "Can (Bot)", "Elif (Bot)", "Mehmet (Bot)", "Deniz (Bot)"];
@@ -5121,16 +5270,98 @@ async function startServer() {
       }
     });
 
-    socket.on("close_table", ({ tableId }: { tableId: string }) => {
-      if (tableId && activeCardTablesRegistry.has(String(tableId))) {
+    socket.on("close_table", ({ tableId }: { tableId: string }, cb?: any) => {
+      if (tableId && typeof closeAnyTableAndNotify === "function") {
+        closeAnyTableAndNotify(String(tableId));
+      } else if (tableId && activeCardTablesRegistry.has(String(tableId))) {
         activeCardTablesRegistry.delete(String(tableId));
         broadcastActiveTables();
       }
+      if (cb) cb({ success: true });
+    });
+
+    socket.on("table:delete", ({ tableId }: { tableId: string }, cb?: any) => {
+      if (tableId && typeof closeAnyTableAndNotify === "function") {
+        closeAnyTableAndNotify(String(tableId));
+      }
+      if (cb) cb({ success: true });
+    });
+
+    socket.on("table:close", ({ tableId }: { tableId: string }, cb?: any) => {
+      if (tableId && typeof closeAnyTableAndNotify === "function") {
+        closeAnyTableAndNotify(String(tableId));
+      }
+      if (cb) cb({ success: true });
+    });
+
+    socket.on("admin_close_table", ({ tableId }: { tableId: string }, cb?: any) => {
+      if (tableId && typeof closeAnyTableAndNotify === "function") {
+        closeAnyTableAndNotify(String(tableId));
+      }
+      if (cb) cb({ success: true, message: `Masa ${tableId} kapatıldı.` });
+    });
+
+    // Universal Join Table Handler
+    socket.on("join_table", ({ tableId, gameType }: { tableId: string; gameType?: string }, cb?: any) => {
+      const tid = String(tableId);
+      if (!tid) return cb && cb({ error: "Masa kimliği eksik." });
+
+      if (gameType === "blackjack" || blackjackRooms.has(tid)) {
+        socket.join(`blackjack_${tid}`);
+        const tbl = blackjackRooms.get(tid);
+        if (tbl) {
+          const isSeated = (tbl.seats || []).some((s: any) => s && s.userId === user.id);
+          if (!isSeated) {
+            const emptyIdx = (tbl.seats || []).findIndex((s: any) => s === null);
+            if (emptyIdx !== -1) {
+              tbl.seats[emptyIdx] = {
+                seatIndex: emptyIdx,
+                userId: user.id,
+                username: user.username,
+                avatar: user.avatar,
+                color: user.color,
+                isBot: false,
+                chips: user.chips || 1000,
+                hands: [],
+                activeHandIndex: 0,
+                insuranceBet: 0,
+                hasInsurance: false,
+                isReady: false
+              };
+              io.to(`blackjack_${tid}`).emit("blackjack_state", tbl);
+            }
+          }
+          if (cb) cb({ success: true, table: tbl });
+          return;
+        }
+      }
+      if (gameType === "batak" || tid.startsWith("batak_")) {
+        socket.join(`batak_${tid}`);
+        if (cb) cb({ success: true, tableId: tid });
+        return;
+      }
+      if (gameType === "uno" || unoRooms.has(tid)) {
+        socket.join(`uno_${tid}`);
+        if (cb) cb({ success: true, roomId: tid });
+        return;
+      }
+      if (gameType === "okey101" || okey101Rooms.has(tid)) {
+        socket.join(`okey101_${tid}`);
+        if (cb) cb({ success: true, roomId: tid });
+        return;
+      }
+      if (gameType === "okey" || okeyRooms.has(tid)) {
+        socket.join(`okey_${tid}`);
+        if (cb) cb({ success: true, roomId: tid });
+        return;
+      }
+      if (cb) cb({ success: true });
     });
 
     // Blackjack Socket Handlers
     socket.on("blackjack_update_state", (tableState: any) => {
       if (tableState && tableState.id) {
+        blackjackRooms.set(String(tableState.id), tableState);
         socket.to(`blackjack_${tableState.id}`).emit("blackjack_state", tableState);
 
         const occupiedSeats = (tableState.seats || []).filter((s: any) => s !== null);
@@ -5160,9 +5391,16 @@ async function startServer() {
       }
     });
 
-    socket.on("get_blackjack_state", ({ tableId }: { tableId: string }) => {
+    socket.on("get_blackjack_state", ({ tableId }: { tableId: string }, cb?: any) => {
       if (tableId) {
         socket.join(`blackjack_${tableId}`);
+        const existing = blackjackRooms.get(String(tableId));
+        if (existing) {
+          socket.emit("blackjack_state", existing);
+          if (cb) cb({ success: true, table: existing });
+        } else if (cb) {
+          cb({ success: false });
+        }
       }
     });
 
@@ -6189,6 +6427,19 @@ async function startServer() {
         if (room.status === 'playing') {
           socket.emit("okey_hand", existingPlayer.hand || []);
         }
+      } else {
+        // Game already playing or full: join as spectator!
+        if (!room.spectators) room.spectators = [];
+        if (!room.spectators.some((s: any) => s.id === user.id)) {
+          room.spectators.push({
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            color: user.color,
+            socketId: socket.id
+          });
+        }
+        socket.emit("okey_spectator_mode", { roomId, message: "İzleyici modundasınız. Mevcut el bitince sıradaki tura dahil edileceksiniz." });
       }
 
       socket.join(`okey_${roomId}`);
@@ -6235,6 +6486,46 @@ async function startServer() {
       if (room.botTimeout) {
         clearTimeout(room.botTimeout);
         room.botTimeout = null;
+      }
+
+      // Promote waiting spectators into active players for the new round
+      if (Array.isArray(room.spectators) && room.spectators.length > 0) {
+        for (let i = 0; i < room.players.length && room.spectators.length > 0; i++) {
+          if (room.players[i].isBot) {
+            const spec = room.spectators.shift();
+            room.players[i] = {
+              id: spec.id,
+              username: spec.username,
+              avatar: spec.avatar,
+              color: spec.color,
+              socketId: spec.socketId,
+              isBot: false,
+              hand: [],
+              discardPile: [],
+              score: 0
+            };
+            if (spec.socketId) {
+              io.to(spec.socketId).emit("okey_promoted_to_player", { message: "Yeni tur başladı! Masaya oyuncu olarak dahil edildiniz." });
+            }
+          }
+        }
+        while (room.players.length < 4 && room.spectators.length > 0) {
+          const spec = room.spectators.shift();
+          room.players.push({
+            id: spec.id,
+            username: spec.username,
+            avatar: spec.avatar,
+            color: spec.color,
+            socketId: spec.socketId,
+            isBot: false,
+            hand: [],
+            discardPile: [],
+            score: 0
+          });
+          if (spec.socketId) {
+            io.to(spec.socketId).emit("okey_promoted_to_player", { message: "Yeni tur başladı! Masaya oyuncu olarak dahil edildiniz." });
+          }
+        }
       }
 
       // Auto-fill empty seats with Bots up to 4 players so game can always start
@@ -6526,33 +6817,48 @@ async function startServer() {
     socket.on("uno_join_room", (roomId: string) => {
       const room = unoRooms.get(roomId);
       if (!room) return socket.emit("uno_error", "Masa bulunamadı.");
-      if (room.status !== 'waiting' && !room.players.some((p: any) => p.id === user.id)) {
-        return socket.emit("uno_error", "Oyun zaten başlamış.");
-      }
-      if (room.players.length >= 4 && !room.players.some((p: any) => p.id === user.id)) {
-        return socket.emit("uno_error", "Masa dolu (Maksimum 4 oyuncu).");
-      }
 
       socket.data.currentUnoRoom = roomId;
       socket.join(`uno_${roomId}`);
 
       const existingPlayer = room.players.find((p: any) => p.id === user.id);
-      if (!existingPlayer) {
-        room.players.push({
-          id: user.id,
-          username: user.username,
-          avatar: user.avatar,
-          color: user.color,
-          isBot: false,
-          socketId: socket.id,
-          hand: [],
-          hasCalledUno: false,
-          score: 0
-        });
-        room.lastActionMessage = `${user.username} masaya katıldı.`;
-      } else {
+      if (existingPlayer) {
         existingPlayer.socketId = socket.id;
+        broadcastUnoRoom(roomId);
+        emitUnoRoomsList();
+        return;
       }
+
+      // If game has already started or table is full (4 players), join as spectator!
+      if (room.status === 'playing' || room.players.length >= 4) {
+        if (!room.spectators) room.spectators = [];
+        if (!room.spectators.some((s: any) => s.id === user.id)) {
+          room.spectators.push({
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            color: user.color,
+            socketId: socket.id
+          });
+        }
+        socket.emit("uno_spectator_mode", { roomId, message: "İzleyici modundasınız. Mevcut el bitince sıradaki tura dahil edileceksiniz." });
+        broadcastUnoRoom(roomId);
+        emitUnoRoomsList();
+        return;
+      }
+
+      room.players.push({
+        id: user.id,
+        username: user.username,
+        avatar: user.avatar,
+        color: user.color,
+        isBot: false,
+        socketId: socket.id,
+        hand: [],
+        hasCalledUno: false,
+        score: 0
+      });
+      room.lastActionMessage = `${user.username} masaya katıldı.`;
 
       broadcastUnoRoom(roomId);
       emitUnoRoomsList();
@@ -6735,6 +7041,46 @@ async function startServer() {
       if (!roomId) return;
       const room = unoRooms.get(roomId);
       if (!room || room.hostId !== user.id || room.status !== 'ended') return;
+
+      // Promote waiting spectators into active players for the new round
+      if (Array.isArray(room.spectators) && room.spectators.length > 0) {
+        for (let i = 0; i < room.players.length && room.spectators.length > 0; i++) {
+          if (room.players[i].isBot) {
+            const spec = room.spectators.shift();
+            room.players[i] = {
+              id: spec.id,
+              username: spec.username,
+              avatar: spec.avatar,
+              color: spec.color,
+              isBot: false,
+              socketId: spec.socketId,
+              hand: [],
+              hasCalledUno: false,
+              score: 0
+            };
+            if (spec.socketId) {
+              io.to(spec.socketId).emit("uno_promoted_to_player", { message: "Yeni tur başladı, oyuna dahil edildiniz!" });
+            }
+          }
+        }
+        while (room.players.length < 4 && room.spectators.length > 0) {
+          const spec = room.spectators.shift();
+          room.players.push({
+            id: spec.id,
+            username: spec.username,
+            avatar: spec.avatar,
+            color: spec.color,
+            isBot: false,
+            socketId: spec.socketId,
+            hand: [],
+            hasCalledUno: false,
+            score: 0
+          });
+          if (spec.socketId) {
+            io.to(spec.socketId).emit("uno_promoted_to_player", { message: "Yeni tur başladı, oyuna dahil edildiniz!" });
+          }
+        }
+      }
 
       const fullDeck = createUnoDeck();
       room.deck = fullDeck;
@@ -7918,32 +8264,55 @@ async function startServer() {
         return;
       }
 
-      if (room.players.length >= 4 && !room.players.some((p: any) => p.id === user.id)) {
-        if (cb) cb({ error: "Masa dolu (Maksimum 4 oyuncu)." });
-        return;
-      }
-
       const existingPlayer = room.players.find((p: any) => p.id === user.id);
       if (existingPlayer) {
         existingPlayer.socketId = socket.id;
-      } else {
-        room.players.push({
-          id: user.id,
-          username: user.username,
-          avatar: user.avatar,
-          color: user.color,
-          isBot: false,
-          socketId: socket.id,
-          hand: [],
-          discardPile: [],
-          hasOpened: false,
-          openedMode: undefined,
-          openedScore: 0,
-          openedMeldsCount: 0,
-          penalties: 0,
-          roundPenalty: 0
-        });
+        socket.data.currentOkey101Room = roomId;
+        socket.join(`okey101_${roomId}`);
+        socket.join(roomId);
+        broadcast101Room(roomId);
+        emit101RoomsList();
+        if (cb) cb({ success: true, roomId, isSpectator: false });
+        return;
       }
+
+      // If game is already playing or table is full, join as spectator!
+      if (room.status === 'playing' || room.players.length >= 4) {
+        if (!room.spectators) room.spectators = [];
+        if (!room.spectators.some((s: any) => s.id === user.id)) {
+          room.spectators.push({
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            color: user.color,
+            socketId: socket.id
+          });
+        }
+        socket.data.currentOkey101Room = roomId;
+        socket.join(`okey101_${roomId}`);
+        socket.join(roomId);
+        broadcast101Room(roomId);
+        emit101RoomsList();
+        if (cb) cb({ success: true, roomId, isSpectator: true, message: "İzleyici olarak katıldınız. Yeni turda oyuna dahil edileceksiniz." });
+        return;
+      }
+
+      room.players.push({
+        id: user.id,
+        username: user.username,
+        avatar: user.avatar,
+        color: user.color,
+        isBot: false,
+        socketId: socket.id,
+        hand: [],
+        discardPile: [],
+        hasOpened: false,
+        openedMode: undefined,
+        openedScore: 0,
+        openedMeldsCount: 0,
+        penalties: 0,
+        roundPenalty: 0
+      });
 
       socket.data.currentOkey101Room = roomId;
       socket.join(`okey101_${roomId}`);

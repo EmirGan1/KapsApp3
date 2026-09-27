@@ -61,33 +61,48 @@ export default function BatakGame({
   useEffect(() => {
     if (!socket) return;
 
+    const isJoiningExisting = Boolean(tableId && tableId !== 'batak_local');
+
     const onTableState = (syncedTable: BatakState) => {
       if (syncedTable && syncedTable.id === table.id) {
         setTable(syncedTable);
       }
     };
 
+    const onTableClosed = (data?: { reason?: string }) => {
+      showBanner(data?.reason || 'Masa yönetici tarafından kapatıldı.', 'info', 4000);
+      setTimeout(() => onBackToHub(), 1500);
+    };
+
     socket.on('batak_state', onTableState);
-    socket.emit('get_batak_state', { tableId: table.id });
-    socket.emit('register_table', {
-      id: table.id,
-      gameType: 'batak',
-      title: `${username}'in Batak Masası`,
-      hostId: currentUserId,
-      hostName: username,
-      hostAvatar: avatar,
-      playerCount: table.players.filter(p => !p.isBot).length || 1,
-      maxPlayers: 4,
-      botCount: table.players.filter(p => p.isBot).length,
-      status: 'Lobi Bekliyor',
-      gameMode: table.gameMode
-    });
-    socket.emit('batak_update_state', table);
+    socket.on('table_closed', onTableClosed);
+
+    if (isJoiningExisting) {
+      socket.emit('join_table', { tableId: table.id, gameType: 'batak' });
+      socket.emit('get_batak_state', { tableId: table.id });
+    } else {
+      socket.emit('get_batak_state', { tableId: table.id });
+      socket.emit('register_table', {
+        id: table.id,
+        gameType: 'batak',
+        title: `${username}'in Batak Masası`,
+        hostId: currentUserId,
+        hostName: username,
+        hostAvatar: avatar,
+        playerCount: table.players.filter(p => !p.isBot).length || 1,
+        maxPlayers: 4,
+        botCount: table.players.filter(p => p.isBot).length,
+        status: 'Lobi Bekliyor',
+        gameMode: table.gameMode
+      });
+      socket.emit('batak_update_state', table);
+    }
 
     return () => {
       socket.off('batak_state', onTableState);
+      socket.off('table_closed', onTableClosed);
     };
-  }, [socket, table.id]);
+  }, [socket, table.id, tableId]);
 
   const broadcastTable = useCallback((newTable: BatakState) => {
     setTable(newTable);

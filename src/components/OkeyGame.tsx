@@ -21,18 +21,39 @@ import { TableChatMessage } from '../types';
 const INITIAL_RACK_SIZE = 30; // 2 rows x 15 slots
 
 export default function OkeyGame({ 
-  socket, currentUserId, username, avatar, color, onBackToHub, onRoomStateChange 
+  socket, currentUserId, username, avatar, color, targetRoomId, onBackToHub, onRoomStateChange 
 }: { 
   socket: Socket | null; 
   currentUserId: number; 
   username: string; 
   avatar?: string | null; 
   color?: string | null; 
+  targetRoomId?: string | null;
   onBackToHub?: () => void;
   onRoomStateChange?: (inRoom: boolean) => void;
 }) {
   const [rooms, setRooms] = useState<any[]>([]);
   const [currentRoom, setCurrentRoom] = useState<OkeyRoomState | null>(null);
+
+  // Auto join targetRoomId on mount
+  useEffect(() => {
+    if (socket && targetRoomId) {
+      socket.emit("join_okey", targetRoomId);
+    }
+  }, [socket, targetRoomId]);
+
+  // Handle table_closed
+  useEffect(() => {
+    if (!socket) return;
+    const onTableClosed = (data?: { reason?: string }) => {
+      setErrorMessage(data?.reason || "Masa kapatıldı.");
+      setTimeout(() => onBackToHub?.(), 1500);
+    };
+    socket.on("table_closed", onTableClosed);
+    return () => {
+      socket.off("table_closed", onTableClosed);
+    };
+  }, [socket, onBackToHub]);
   const [isCreating, setIsCreating] = useState(false);
   const [newRoomName, setNewRoomName] = useState('Klasik Okey Masası');
   const [isPrivateRoom, setIsPrivateRoom] = useState(false);
@@ -800,14 +821,13 @@ export default function OkeyGame({
                   </div>
                   <button 
                     onClick={() => joinRoom(room.id)}
-                    disabled={room.players >= 4 && room.status !== 'playing'}
-                    className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors ${
-                      room.players >= 4 && room.status !== 'playing' 
-                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed' 
+                    className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-colors cursor-pointer ${
+                      room.status === 'playing'
+                        ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-sm'
                         : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
                     }`}
                   >
-                    Masaya Otur
+                    {room.status === 'playing' ? '👁️ İzle (Sıraya Gir)' : 'Masaya Otur'}
                   </button>
                 </div>
               ))
@@ -819,6 +839,7 @@ export default function OkeyGame({
   }
 
   // --- OKEY TABLE VIEW ---
+  const isSpectator = Boolean(myPlayerIdx === -1);
   const tablePlayers = currentRoom.players || [];
   
   // Arrange players relative to current user:
@@ -965,6 +986,17 @@ export default function OkeyGame({
           </button>
         </div>
       </div>
+
+      {/* Spectator Notice Banner */}
+      {isSpectator && (
+        <div className="bg-gradient-to-r from-amber-600/90 to-yellow-600/90 text-white px-3 sm:px-4 py-1.5 sm:py-2 text-[11px] sm:text-xs font-black flex items-center justify-between shadow-md shrink-0 border-b border-amber-400/40 z-30">
+          <div className="flex items-center gap-2">
+            <span className="text-sm sm:text-base">👁️</span>
+            <span>Canlı İzleyici Modu: Masayı izliyorsunuz. Mevcut el bitince sıradaki tura otomatik olarak oyuncu olarak başlayacaksınız!</span>
+          </div>
+          <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-bold shrink-0">Sırada Bekleniyor</span>
+        </div>
+      )}
 
       {/* Opponents Dashboard Bar (Top) - Compact, Scaled for Mobile & Tablet */}
       <div className="bg-slate-900/70 border-b border-slate-800 px-2 py-1.5 flex items-center justify-around gap-1 shrink-0 z-10">

@@ -35,6 +35,7 @@ export interface UnoRoomState {
   winnerId?: number | null;
   lastActionMessage?: string;
   discardPileCount?: number;
+  spectators?: Array<{ id: number; username: string; avatar?: string | null; color?: string | null }>;
 }
 
 // Generates a full standard 108-card UNO deck

@@ -220,22 +220,44 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
   }, []);
 
   const handleCloseTable = async (tableId: string) => {
-    if (!window.confirm(`Masa (${tableId}) kapatılacak. Onaylıyor musunuz?`)) return;
+    if (!window.confirm(`Masa (${tableId}) kapatılacak ve oyuncular lobiye yönlendirilecek. Onaylıyor musunuz?`)) return;
     setActionLoading(true);
     try {
+      // 1. Emit instant socket events to close table across all clients immediately
+      if (socket && socket.connected) {
+        socket.emit("table:delete", { tableId });
+        socket.emit("table:close", { tableId });
+        socket.emit("admin_close_table", { tableId });
+      }
+
+      // Optimistically remove from state
+      setActiveTables((prev) => prev.filter((t) => t.id !== tableId));
+
+      // 2. Perform backend REST delete
       const res = await fetch(getApiUrl(`/api/admin/tables/${tableId}`), {
         method: "DELETE",
         headers: getAuthHeaders()
       });
       const data = await res.json();
       if (res.ok) {
-        showToast(`Masa ${tableId} kapatıldı.`, "success");
-        fetchActiveTables();
+        showToast(`Masa ${tableId} başarıyla kapatıldı.`, "success");
       } else {
-        showToast(data.error || "Masa kapatılamadı.", "error");
+        // Fallback: try POST /api/admin/tables/:id/close
+        const resFallback = await fetch(getApiUrl(`/api/admin/tables/${tableId}/close`), {
+          method: "POST",
+          headers: getAuthHeaders()
+        });
+        const dataFallback = await resFallback.json();
+        if (resFallback.ok) {
+          showToast(`Masa ${tableId} başarıyla kapatıldı.`, "success");
+        } else {
+          showToast(data.error || dataFallback.error || "Masa kapatılamadı.", "error");
+        }
       }
+      fetchActiveTables();
     } catch (err: any) {
       showToast("Hata: " + err.message, "error");
+      fetchActiveTables();
     } finally {
       setActionLoading(false);
     }
