@@ -103,6 +103,7 @@ export default function BlackjackGame({
   useEffect(() => {
     const token = localStorage.getItem('lan_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
     fetch(getApiUrl('/api/leaderboard?type=chips'), {
+      credentials: 'include',
       headers: token ? { Authorization: `Bearer ${token}` } : {}
     })
       .then((res) => res.json())
@@ -916,6 +917,7 @@ export default function BlackjackGame({
       const token = localStorage.getItem('lan_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
       const res = await fetch(getApiUrl('/api/chips/refill'), {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {})

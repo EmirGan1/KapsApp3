@@ -16,7 +16,7 @@ import AdminChipManagerModal from './AdminChipManagerModal';
 import KvkkModal from './KvkkModal';
 import PlayingCard from './PlayingCard';
 import Avatar from './Avatar';
-import { getApiUrl } from '../utils/api';
+import { getApiUrl, getAuthHeaders } from '../utils/api';
 
 interface GamesProps {
   socket: Socket | null;
@@ -88,7 +88,7 @@ export default function Games({
         setLoadingLeaderboard(false);
       });
     } else {
-      fetch(getApiUrl(`/api/leaderboard?type=${tab}`))
+      fetch(getApiUrl(`/api/leaderboard?type=${tab}`), { credentials: 'include', headers: getAuthHeaders() })
         .then(res => res.json())
         .then(data => {
           if (Array.isArray(data)) setLeaderboardData(data);

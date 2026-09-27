@@ -4,7 +4,7 @@ import { Friend, Message, MediaModalData } from "../types";
 import { Send, Image as ImageIcon, Mic, Users, Plus, X, Reply, Smile, FileText, Download, Paperclip, Maximize2, Trash2, Loader2, Phone, PhoneCall } from "lucide-react";
 import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
-import { getApiUrl } from "../utils/api";
+import { getApiUrl, getAuthHeaders } from "../utils/api";
 import { compressImage } from "../utils/imageCompressor";
 import { useCall } from "../context/CallContext";
 
@@ -500,7 +500,7 @@ export default function Chats({
       }
       const formData = new FormData();
       formData.append("file", fileToUpload);
-      const res = await fetch(getApiUrl("/api/upload"), { method: "POST", body: formData });
+      const res = await fetch(getApiUrl("/api/upload"), { method: "POST", body: formData, credentials: "include", headers: getAuthHeaders() });
       const data = await res.json();
       if (res.ok && data.url) {
         const payload = {
@@ -562,7 +562,7 @@ export default function Chats({
         const formData = new FormData();
         formData.append("file", audioBlob, "voice.webm");
         try {
-          const res = await fetch(getApiUrl("/api/upload"), { method: "POST", body: formData });
+          const res = await fetch(getApiUrl("/api/upload"), { method: "POST", body: formData, credentials: "include", headers: getAuthHeaders() });
           const data = await res.json();
           if (res.ok && socket && activeChat) {
             if (activeTab === "friends") {
