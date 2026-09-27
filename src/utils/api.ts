@@ -1,45 +1,76 @@
 import { getCachedHardwareFingerprint, getHardwareFingerprint } from "./deviceFingerprint";
 
 // Detect if running in local dev, Capacitor webview, or native container
-const isLocal = typeof window !== "undefined" && (
+const isLocalOrCapacitor = typeof window !== "undefined" && (
+  window.location.protocol.startsWith("capacitor:") ||
+  window.location.protocol.startsWith("file:") ||
+  window.location.protocol.startsWith("ionic:") ||
   window.location.hostname === "localhost" ||
   window.location.hostname === "127.0.0.1" ||
-  window.location.hostname.endsWith(".localhost") ||
-  window.location.protocol === "file:" ||
-  window.location.protocol === "capacitor:" ||
-  window.location.protocol === "ionic:"
+  window.location.hostname.endsWith(".localhost")
 );
 
 const isHttp = typeof window !== "undefined" && window.location.protocol.startsWith("http");
 
-// Frontend API & WebSocket Absolute Address Guarantee (Capacitor / Android WebView / Web)
-export const BASE_URL = (
+// Frontend API Absolute Base URL Guarantee (Capacitor / Android WebView / Web)
+export const API_BASE_URL = (
   (import.meta.env.VITE_BACKEND_URL as string | undefined) ||
   (import.meta.env.VITE_API_URL as string | undefined) ||
-  (isHttp && !isLocal ? window.location.origin : "https://kapsapp.online")
+  (isLocalOrCapacitor ? "https://kapsapp.online" : (isHttp ? window.location.origin : "https://kapsapp.online"))
 ).replace(/\/$/, "");
 
-export const BACKEND_URL = BASE_URL;
+export const BASE_URL = API_BASE_URL;
+export const BACKEND_URL = API_BASE_URL;
+
+// Socket.IO Server Address Guarantee
+export const SOCKET_URL = (
+  (typeof window !== "undefined" && (window.location.protocol.startsWith("capacitor:") || window.location.protocol.startsWith("file:") || window.location.hostname === "localhost"))
+    ? "https://kapsapp.online"
+    : (API_BASE_URL || "https://kapsapp.online")
+).replace(/\/$/, "");
 
 /**
  * Returns absolute API URL
  */
 export function getApiUrl(path: string = ""): string {
-  if (!path) return BASE_URL;
+  if (!path) return API_BASE_URL;
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  return `${BASE_URL}${cleanPath}`;
+  return `${API_BASE_URL}${cleanPath}`;
 }
 
 /**
  * Returns Socket.IO URL
  */
 export function getSocketUrl(): string {
-  return BASE_URL || "https://kapsapp.online";
+  return SOCKET_URL || "https://kapsapp.online";
 }
 
 /**
- * Safe fetch JSON wrapper with automatic Physical Hardware Fingerprint headers
- * (`X-Hardware-Fingerprint` & `X-Device-Id`) and instantaneous Device Ban interception.
+ * Returns standard headers including Bearer Token and Hardware Fingerprints
+ */
+export function getAuthHeaders(extraHeaders?: HeadersInit): Headers {
+  const headers = new Headers(extraHeaders || {});
+
+  const token = typeof localStorage !== "undefined" 
+    ? (localStorage.getItem("lan_token") || localStorage.getItem("token") || localStorage.getItem("auth_token"))
+    : null;
+
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const hwFingerprint = getCachedHardwareFingerprint();
+  if (hwFingerprint && hwFingerprint !== "hw_pending_init") {
+    if (!headers.has("X-Hardware-Fingerprint")) headers.set("X-Hardware-Fingerprint", hwFingerprint);
+    if (!headers.has("X-Device-Id")) headers.set("X-Device-Id", hwFingerprint);
+  }
+
+  return headers;
+}
+
+/**
+ * Safe fetch JSON wrapper with automatic JWT Bearer token, Physical Hardware Fingerprint headers
+ * (`X-Hardware-Fingerprint` & `X-Device-Id`), withCredentials support, and instantaneous Device Ban interception.
  */
 export async function safeFetchJson<T = any>(input: string, init?: RequestInit): Promise<T> {
   const targetUrl = getApiUrl(input);
@@ -50,23 +81,30 @@ export async function safeFetchJson<T = any>(input: string, init?: RequestInit):
     hwFingerprint = await getHardwareFingerprint();
   }
 
-  const headers = new Headers(init?.headers || {});
+  const headers = getAuthHeaders(init?.headers);
   if (hwFingerprint) {
     headers.set("X-Hardware-Fingerprint", hwFingerprint);
     headers.set("X-Device-Id", hwFingerprint);
   }
 
-  const res = await fetch(targetUrl, {
-    ...init,
-    headers
-  });
+  let res: Response;
+  try {
+    res = await fetch(targetUrl, {
+      credentials: init?.credentials || "include",
+      ...init,
+      headers
+    });
+  } catch (networkErr: any) {
+    console.error(`[API Network Error] Hedef URL: ${targetUrl}`, networkErr);
+    throw new Error(`Sunucuya bağlanılamadı (${API_BASE_URL}). Lütfen internet bağlantınızı veya sunucu erişimini kontrol edin.`);
+  }
 
   const contentType = res.headers.get("content-type");
 
   if (!contentType || !contentType.includes("application/json")) {
     const text = await res.text();
-    console.error("Beklenmeyen sunucu yanıtı (HTML/404):", text);
-    throw new Error("Sunucuya bağlanılamadı. Backend servisi henüz uyanmamış veya çevrimdışı olabilir.");
+    console.error(`Beklenmeyen sunucu yanıtı (${res.status} ${res.statusText}) URL: ${targetUrl}:`, text);
+    throw new Error(`Sunucuya bağlanılamadı (${API_BASE_URL}). Backend servisi henüz uyanmamış veya çevrimdışı olabilir.`);
   }
 
   const data = await res.json();
@@ -80,7 +118,7 @@ export async function safeFetchJson<T = any>(input: string, init?: RequestInit):
   }
 
   if (!res.ok) {
-    throw new Error(data.message || data.error || "İşlem gerçekleştirilemedi.");
+    throw new Error(data.message || data.error || data.messageTr || "İşlem gerçekleştirilemedi.");
   }
 
   return data;

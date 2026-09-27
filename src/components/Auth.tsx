@@ -49,10 +49,11 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         onAuthSuccess(data.token, data.username, data.avatar || null, data.id, data.color);
       }
     } catch (err: any) {
+      console.error(`[Auth ${isLogin ? "Login" : "Register"} Error]:`, err);
       if (err.message?.includes("ACCOUNT_PENDING") || err.message?.includes("onaylanmadı")) {
         setError("Hesabınız henüz onaylanmadı. Yönetici (emirgan) onayı bekleniyor.");
       } else {
-        setError(err.message);
+        setError(err.message || "Giriş veya kayıt işlemi gerçekleştirilemedi. Lütfen bağlantınızı kontrol edin.");
       }
     } finally {
       setIsLoading(false);

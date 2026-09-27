@@ -229,10 +229,11 @@ export default function App() {
       const socketOptions = { 
         path: "/socket.io",
         transports: ["websocket", "polling"],
+        withCredentials: true,
         autoConnect: true,
         auth: { token, deviceId: hwFingerprint, hardwareFingerprint: hwFingerprint },
         reconnection: true,
-        reconnectionAttempts: Infinity,
+        reconnectionAttempts: 10,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
         timeout: 20000
