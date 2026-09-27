@@ -5391,6 +5391,14 @@ async function startServer() {
       }
     });
 
+    socket.on("blackjack_round_ended", (data: any) => {
+      if (data && data.tableId && data.tableState) {
+        blackjackRooms.set(String(data.tableId), data.tableState);
+        io.to(`blackjack_${data.tableId}`).emit("blackjack_state", data.tableState);
+        io.to(`blackjack_${data.tableId}`).emit("blackjack_round_ended", data);
+      }
+    });
+
     socket.on("get_blackjack_state", ({ tableId }: { tableId: string }, cb?: any) => {
       if (tableId) {
         socket.join(`blackjack_${tableId}`);

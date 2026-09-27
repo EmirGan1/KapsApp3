@@ -9,9 +9,9 @@ import PlayingCard, { Card } from './PlayingCard';
 import Avatar from './Avatar';
 import AdminChipManagerModal from './AdminChipManagerModal';
 import { 
-  BlackjackState, BlackjackSeat, BlackjackHand, HandResult,
+  BlackjackState, BlackjackSeat, BlackjackHand, HandResult, DealerState,
   calculateHandScore, formatScoreDisplay, decideBotAction, 
-  drawCard, initializeBlackjackTable 
+  drawCard, initializeBlackjackTable, createShoe 
 } from '../utils/blackjackEngine';
 import { CreateTableOptions } from './CardTableLobbyModal';
 import { getApiUrl } from '../utils/api';
@@ -75,6 +75,7 @@ export default function BlackjackGame({
   useEffect(() => {
     tableRef.current = table;
   }, [table]);
+  const isDealerRunningRef = useRef<boolean>(false);
 
   const [selectedBetChip, setSelectedBetChip] = useState<number>(table.minBet || 50);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
@@ -172,20 +173,33 @@ export default function BlackjackGame({
       if (!data) return;
       const newChips = Number(data.chips);
       
-      setTable((prev) => {
-        const updated = {
-          ...prev,
-          seats: prev.seats.map((s) => (s && s.userId === data.userId ? { ...s, chips: newChips } : s))
-        };
-        tableRef.current = updated;
-        return updated;
-      });
-
       if (data.userId === currentUserId) {
         setCurrentUserChips(newChips);
         if (data.message) {
           showBanner(data.message, 'win', 4000);
         }
+      }
+
+      setTable((prev) => {
+        const updated = {
+          ...prev,
+          seats: prev.seats.map((s) => (s && s.userId === data.userId ? { ...s, chips: newChips } : s))
+        };
+        // Preserve tableRef.current phase and dealer without stale clobbering
+        if (tableRef.current) {
+          tableRef.current = {
+            ...tableRef.current,
+            seats: tableRef.current.seats.map((s) => (s && s.userId === data.userId ? { ...s, chips: newChips } : s))
+          };
+        }
+        return updated;
+      });
+    };
+
+    const onRoundEnded = (data: any) => {
+      if (data && data.tableState && data.tableState.id === table.id) {
+        tableRef.current = data.tableState;
+        setTable(data.tableState);
       }
     };
 
@@ -197,6 +211,7 @@ export default function BlackjackGame({
     const isJoiningExisting = Boolean(tableId && !tableOptions);
 
     socket.on('blackjack_state', onTableState);
+    socket.on('blackjack_round_ended', onRoundEnded);
     socket.on('chips_updated', onChipsUpdated);
     socket.on('table_closed', onTableClosed);
 
@@ -230,6 +245,7 @@ export default function BlackjackGame({
 
     return () => {
       socket.off('blackjack_state', onTableState);
+      socket.off('blackjack_round_ended', onRoundEnded);
       socket.off('chips_updated', onChipsUpdated);
       socket.off('table_closed', onTableClosed);
     };
@@ -329,6 +345,19 @@ export default function BlackjackGame({
     };
   }, [table, isHost, isDealing, isDealerPlaying]);
 
+  // Dedicated effect to ensure Dealer Turn runs reliably across multiplayer & reconnects
+  useEffect(() => {
+    if (table.phase === 'DEALER_TURN' && !isDealerRunningRef.current) {
+      const hostIsSeated = table.seats.some((s) => s && !s.isBot && s.userId === table.hostId);
+      const isLowestHuman = mySeatIndex !== -1 && !table.seats.slice(0, mySeatIndex).some((s) => s && !s.isBot);
+      const shouldRun = isHost || (!hostIsSeated && isLowestHuman);
+
+      if (shouldRun) {
+        playDealerTurn(table);
+      }
+    }
+  }, [table.phase, isHost, mySeatIndex]);
+
   // Advance to next active seat or dealer turn
   const advanceToNextHandOrPlayer = (currentSeatIdx: number, currentTable?: BlackjackState) => {
     const baseTable = currentTable || tableRef.current || table;
@@ -341,6 +370,7 @@ export default function BlackjackGame({
       };
       const nextTable = { ...baseTable, seats: nextSeats };
       tableRef.current = nextTable;
+      setTable(nextTable);
       broadcastTable(nextTable);
       return;
     }
@@ -348,7 +378,7 @@ export default function BlackjackGame({
     let nextSeatIdx = -1;
     for (let i = currentSeatIdx + 1; i < baseTable.seats.length; i++) {
       const s = baseTable.seats[i];
-      if (s && s.hands.length > 0 && s.hands.some((h) => h.result === 'PLAYING' && calculateHandScore(h.cards).score < 21)) {
+      if (s && s.hands.length > 0 && s.hands.some((h) => h.result === 'PLAYING' && calculateHandScore(h.cards).score <= 21)) {
         nextSeatIdx = i;
         break;
       }
@@ -361,6 +391,7 @@ export default function BlackjackGame({
         turnExpiresAt: Date.now() + (baseTable.turnTimeLimit || 15) * 1000
       };
       tableRef.current = nextTable;
+      setTable(nextTable);
       broadcastTable(nextTable);
     } else {
       // All players finished -> Dealer's turn!
@@ -370,10 +401,9 @@ export default function BlackjackGame({
         activeSeatIndex: -1
       };
       tableRef.current = nextTable;
+      setTable(nextTable);
       broadcastTable(nextTable);
-      if (isHost) {
-        playDealerTurn(nextTable);
-      }
+      playDealerTurn(nextTable);
     }
   };
 
@@ -698,14 +728,15 @@ export default function BlackjackGame({
 
   const handleStand = (seatIndex: number) => {
     if (table.phase !== 'PLAYER_TURNS' || table.activeSeatIndex !== seatIndex || isDealing || isDealerPlaying || isActionProcessing) return;
-    const seat = table.seats[seatIndex];
+    const currentTbl = tableRef.current || table;
+    const seat = currentTbl.seats[seatIndex];
     if (!seat) return;
     const hand = seat.hands[seat.activeHandIndex];
     if (!hand || hand.result !== 'PLAYING') return;
 
     setIsActionProcessing(true);
 
-    const nextSeats = [...table.seats];
+    const nextSeats = [...currentTbl.seats];
     const nextHands = [...seat.hands];
     nextHands[seat.activeHandIndex] = {
       ...hand,
@@ -716,8 +747,9 @@ export default function BlackjackGame({
       hands: nextHands
     };
 
-    const nextTable: BlackjackState = { ...table, seats: nextSeats };
+    const nextTable: BlackjackState = { ...currentTbl, seats: nextSeats };
     tableRef.current = nextTable;
+    setTable(nextTable);
     broadcastTable(nextTable);
     showBanner(`Kalındı: ${hand.score} puan ✋`, 'info', 1500);
     advanceToNextHandOrPlayer(seatIndex, nextTable);
@@ -727,7 +759,8 @@ export default function BlackjackGame({
 
   const handleDouble = async (seatIndex: number) => {
     if (table.phase !== 'PLAYER_TURNS' || table.activeSeatIndex !== seatIndex || isDealing || isDealerPlaying) return;
-    const seat = table.seats[seatIndex];
+    const currentTbl = tableRef.current || table;
+    const seat = currentTbl.seats[seatIndex];
     if (!seat) return;
     const hand = seat.hands[seat.activeHandIndex];
     if (!hand || hand.result !== 'PLAYING') return;
@@ -747,7 +780,7 @@ export default function BlackjackGame({
       return;
     }
 
-    let shoe = [...table.shoe];
+    let shoe = [...currentTbl.shoe];
     const { card, remainingShoe } = drawCard(shoe);
     shoe = remainingShoe;
 
@@ -755,7 +788,7 @@ export default function BlackjackGame({
     const { score, isSoft } = calculateHandScore(nextCards);
     const nextResult: HandResult = score > 21 ? 'BUST' : 'STAND';
 
-    const nextSeats = [...table.seats];
+    const nextSeats = [...currentTbl.seats];
     const nextHands = [...seat.hands];
     nextHands[seat.activeHandIndex] = {
       ...hand,
@@ -773,8 +806,9 @@ export default function BlackjackGame({
       hands: nextHands
     };
 
-    const nextTable: BlackjackState = { ...table, shoe, seats: nextSeats };
+    const nextTable: BlackjackState = { ...currentTbl, shoe, seats: nextSeats };
     tableRef.current = nextTable;
+    setTable(nextTable);
     broadcastTable(nextTable);
 
     if (nextResult === 'BUST') {
@@ -788,7 +822,8 @@ export default function BlackjackGame({
 
   const handleSplit = (seatIndex: number) => {
     if (table.phase !== 'PLAYER_TURNS' || table.activeSeatIndex !== seatIndex || isDealing || isDealerPlaying) return;
-    const seat = table.seats[seatIndex];
+    const currentTbl = tableRef.current || table;
+    const seat = currentTbl.seats[seatIndex];
     if (!seat) return;
     const hand = seat.hands[seat.activeHandIndex];
     if (!hand || hand.result !== 'PLAYING' || hand.cards.length !== 2) return;
@@ -798,8 +833,8 @@ export default function BlackjackGame({
       return;
     }
 
-    let shoe = [...table.shoe];
-    const nextSeats = [...table.seats];
+    let shoe = [...currentTbl.shoe];
+    const nextSeats = [...currentTbl.seats];
 
     const d1 = drawCard(shoe);
     shoe = d1.remainingShoe;
@@ -843,84 +878,135 @@ export default function BlackjackGame({
       activeHandIndex: 0
     };
 
-    const nextTable: BlackjackState = { ...table, shoe, seats: nextSeats };
+    const nextTable: BlackjackState = { ...currentTbl, shoe, seats: nextSeats };
+    tableRef.current = nextTable;
+    setTable(nextTable);
     broadcastTable(nextTable);
   };
 
-  // --- Paced Dealer Turn (1000ms pause -> Reveal hole card -> 1400ms pause -> Sequential hits) ---
+  // --- Robust & Bulletproof Paced Dealer Turn ---
+  // Dealer Rules:
+  // 1. Reveal dealer hole card (facedown card flips up) & broadcast reveal
+  // 2. Loop: While dealer hand score < 17, draw 1 card -> recalculate score -> broadcast -> wait 1200ms
+  // 3. Once dealer score >= 17 (or bust): cleanly exit loop
+  // 4. Trigger settleBetsAndFinishRound (guaranteed execution whether 0 or multiple hits were made)
   const playDealerTurn = async (incomingTable?: BlackjackState) => {
+    if (isDealerRunningRef.current) return;
+    isDealerRunningRef.current = true;
     setIsDealerPlaying(true);
-    const baseTable = incomingTable || tableRef.current || table;
 
-    // Step 1: 1000ms tension pause
-    await wait(1000);
+    try {
+      let currentTable: BlackjackState = {
+        ...(incomingTable || tableRef.current || table),
+        phase: 'DEALER_TURN',
+        activeSeatIndex: -1
+      };
 
-    // Step 2: Reveal dealer hole card (flip)
-    let shoe = [...baseTable.shoe];
-    const dealerCards = [...baseTable.dealer.cards];
-    let { score, isSoft, isBlackjack } = calculateHandScore(dealerCards);
+      // Broadcast phase DEALER_TURN so everyone knows dealer has begun
+      tableRef.current = currentTable;
+      setTable(currentTable);
+      broadcastTable(currentTable);
 
-    setTable((prev) => {
-      const updated = {
-        ...prev,
+      // Step 1: 800ms tension pause
+      await wait(800);
+
+      // Step 2: Reveal dealer hole card (flip)
+      let shoe = [...(currentTable.shoe || [])];
+      if (shoe.length < 25) {
+        shoe = createShoe(6);
+      }
+      const dealerCards = [...(currentTable.dealer?.cards || [])];
+      let { score, isSoft, isBlackjack } = calculateHandScore(dealerCards);
+
+      currentTable = {
+        ...currentTable,
+        shoe,
+        phase: 'DEALER_TURN',
         dealer: {
-          ...prev.dealer,
+          cards: [...dealerCards],
           score,
           isSoft,
-          hasBlackjack: isBlackjack
+          isBust: score > 21,
+          hasBlackjack: isBlackjack && dealerCards.length === 2
         }
       };
-      tableRef.current = updated;
-      return updated;
-    });
+      tableRef.current = currentTable;
+      setTable(currentTable);
+      broadcastTable(currentTable);
 
-    // Step 3: 1400ms pause
-    await wait(1400);
+      // Step 3: 1000ms pause after reveal so all players see both initial dealer cards
+      await wait(1000);
 
-    // Step 4: Dealer Hit Loop (Draw 1 card -> calculate score -> wait 1400ms -> repeat)
-    while (score < 17) {
-      const draw = drawCard(shoe);
-      shoe = draw.remainingShoe;
-      dealerCards.push(draw.card);
-      const res = calculateHandScore(dealerCards);
-      score = res.score;
-      isSoft = res.isSoft;
+      // Step 4: Dealer Hit Loop (Draw 1 card -> calculate score -> broadcast -> wait 1200ms -> repeat)
+      // Must draw if dealer score is strictly less than 17. Stands on all 17s (hard or soft).
+      while (score < 17) {
+        const draw = drawCard(shoe);
+        shoe = draw.remainingShoe;
+        dealerCards.push(draw.card);
+        const res = calculateHandScore(dealerCards);
+        score = res.score;
+        isSoft = res.isSoft;
 
-      setTable((prev) => {
-        const updated = {
-          ...prev,
+        currentTable = {
+          ...currentTable,
           shoe,
+          phase: 'DEALER_TURN',
           dealer: {
             cards: [...dealerCards],
             score,
             isSoft,
             isBust: score > 21,
-            hasBlackjack: isBlackjack
+            hasBlackjack: false
           }
         };
-        tableRef.current = updated;
-        return updated;
-      });
+        tableRef.current = currentTable;
+        setTable(currentTable);
+        broadcastTable(currentTable);
 
-      await wait(1400);
+        // Visual pacing between draws
+        await wait(1200);
+      }
+
+      // Step 5: 900ms pause before settling bets
+      await wait(900);
+
+      // Step 6: Official Round Settlement & Payouts (ALWAYS called, even if score was >= 17 immediately!)
+      settleBetsAndFinishRound(currentTable, dealerCards, score, isSoft, isBlackjack && dealerCards.length === 2, shoe);
+    } catch (err) {
+      console.error('Error during dealer turn:', err);
+      // Failsafe recovery so game NEVER freezes:
+      const fallbackTable = tableRef.current || table;
+      const dCards = fallbackTable.dealer?.cards || [];
+      const { score: fbScore, isSoft: fbSoft, isBlackjack: fbBj } = calculateHandScore(dCards);
+      settleBetsAndFinishRound(fallbackTable, dCards, fbScore, fbSoft, fbBj, fallbackTable.shoe || []);
+    } finally {
+      isDealerRunningRef.current = false;
+      setIsDealerPlaying(false);
     }
+  };
 
-    const dealerBust = score > 21;
-    const finalDealerState = {
+  // --- Official Settlement & Payout Engine ---
+  const settleBetsAndFinishRound = (
+    baseTbl: BlackjackState,
+    dealerCards: Card[],
+    dealerScore: number,
+    dealerIsSoft: boolean,
+    dealerHasBlackjack: boolean,
+    shoe: Card[]
+  ) => {
+    const latestTable = tableRef.current || baseTbl;
+    const dealerBust = dealerScore > 21;
+    const finalDealerState: DealerState = {
       cards: dealerCards,
-      score,
-      isSoft,
+      score: dealerScore,
+      isSoft: dealerIsSoft,
       isBust: dealerBust,
-      hasBlackjack: isBlackjack
+      hasBlackjack: dealerHasBlackjack
     };
 
-    // Step 5: 1200ms pause before payouts
-    await wait(1200);
-
-    // Step 6: Payout Evaluation & DB Persistence (Uses latest tableRef.current)
-    const latestTable = tableRef.current || baseTable;
     const nextSeats = [...latestTable.seats];
     let myNetDelta = 0;
+    const settlementsSummary: any[] = [];
 
     for (let i = 0; i < nextSeats.length; i++) {
       const seat = nextSeats[i];
@@ -930,7 +1016,9 @@ export default function BlackjackGame({
       const nextHands: BlackjackHand[] = [];
 
       for (const hand of seat.hands) {
-        // ALWAYS re-calculate hand score from cards to eliminate any race condition
+        if (!hand || hand.bet <= 0) continue;
+
+        // Re-calculate hand score from cards to eliminate any race condition
         const { score: currentHandScore, isBlackjack: handIsBj } = calculateHandScore(hand.cards);
         const isPlayerBusted = hand.result === 'BUST' || currentHandScore > 21 || hand.score > 21;
 
@@ -951,14 +1039,14 @@ export default function BlackjackGame({
             payout = hand.bet + Math.floor(hand.bet * 1.5);
           }
         } else {
-          // Valid player hand (hand.score <= 21)
+          // Valid player hand (score <= 21)
           if (dealerBust) {
             result = 'WIN';
             payout = hand.bet * 2;
-          } else if (currentHandScore > score) {
+          } else if (currentHandScore > dealerScore) {
             result = 'WIN';
             payout = hand.bet * 2;
-          } else if (currentHandScore === score) {
+          } else if (currentHandScore === dealerScore) {
             result = 'PUSH';
             payout = hand.bet;
           } else {
@@ -970,10 +1058,19 @@ export default function BlackjackGame({
         seatChips += payout;
         nextHands.push({ ...hand, score: currentHandScore, result, payout });
 
+        const handDelta = payout - hand.bet;
         if (seat.userId === currentUserId) {
-          const handDelta = payout - hand.bet;
           myNetDelta += handDelta;
         }
+
+        settlementsSummary.push({
+          seatIndex: i,
+          userId: seat.userId,
+          username: seat.username,
+          result,
+          payout,
+          delta: handDelta
+        });
       }
 
       nextSeats[i] = {
@@ -998,15 +1095,47 @@ export default function BlackjackGame({
     };
 
     tableRef.current = roundEndTable;
+    setTable(roundEndTable);
     setIsDealerPlaying(false);
     broadcastTable(roundEndTable);
 
-    // Start 5-second countdown for next round visual bar
+    // Socket Event: emit round_ended with full settlement payload to backend & all clients
+    if (socket && socket.connected) {
+      socket.emit('blackjack_round_ended', {
+        tableId: roundEndTable.id,
+        tableState: roundEndTable,
+        settlements: settlementsSummary,
+        dealerScore,
+        dealerBust
+      });
+    }
+
+    // Banner feedback for the player
+    const mySeat = nextSeats.find((s) => s && s.userId === currentUserId);
+    if (mySeat && mySeat.hands.length > 0) {
+      const myPrimaryHand = mySeat.hands[0];
+      if (myPrimaryHand.result === 'BLACKJACK') {
+        showBanner(`BLACKJACK! +${myPrimaryHand.payout} 🪙 kazandınız! 🎯`, 'bj', 4000);
+      } else if (myPrimaryHand.result === 'WIN') {
+        showBanner(`KAZANDINIZ! +${myPrimaryHand.payout} 🪙 🏆`, 'win', 3500);
+      } else if (myPrimaryHand.result === 'PUSH') {
+        showBanner(`BERABERE! Bahsiniz iade edildi. 🤝`, 'push', 3500);
+      } else if (myPrimaryHand.result === 'BUST') {
+        showBanner(`PATLADINIZ (BUST)! El kaybedildi. ❌`, 'lose', 3500);
+      } else {
+        showBanner(`Kasa kazandı (${dealerScore} puan). 😔`, 'lose', 3500);
+      }
+    }
+
+    // Start 5-second countdown with automatic transition to next betting round
     setCountdownSeconds(5);
     const interval = setInterval(() => {
       setCountdownSeconds((prev) => {
         if (prev === null || prev <= 1) {
           clearInterval(interval);
+          if (tableRef.current?.phase === 'ROUND_END') {
+            handleNextRound();
+          }
           return null;
         }
         return prev - 1;
@@ -1016,10 +1145,11 @@ export default function BlackjackGame({
 
   // --- Next Round Transition ---
   const handleNextRound = () => {
-    if (table.phase !== 'ROUND_END') return;
+    const currentTbl = tableRef.current || table;
+    if (currentTbl.phase !== 'ROUND_END') return;
     setCountdownSeconds(null);
 
-    const nextSeats = table.seats.map((s) => {
+    const nextSeats = currentTbl.seats.map((s) => {
       if (!s) return null;
       return {
         ...s,
@@ -1032,7 +1162,7 @@ export default function BlackjackGame({
     });
 
     const nextTable: BlackjackState = {
-      ...table,
+      ...currentTbl,
       phase: 'BETTING',
       activeSeatIndex: -1,
       dealer: {
@@ -1045,6 +1175,8 @@ export default function BlackjackGame({
       seats: nextSeats
     };
 
+    tableRef.current = nextTable;
+    setTable(nextTable);
     broadcastTable(nextTable);
   };
 
