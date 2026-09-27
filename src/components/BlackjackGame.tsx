@@ -81,6 +81,7 @@ export default function BlackjackGame({
   // Pacing & Action Locks
   const [isDealing, setIsDealing] = useState<boolean>(false);
   const [isDealerPlaying, setIsDealerPlaying] = useState<boolean>(false);
+  const [isActionProcessing, setIsActionProcessing] = useState<boolean>(false);
   const [botThinkingSeat, setBotThinkingSeat] = useState<number | null>(null);
   const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
 
@@ -129,6 +130,30 @@ export default function BlackjackGame({
 
     const onTableState = (syncedTable: BlackjackState) => {
       if (syncedTable && syncedTable.id === table.id) {
+        // If current user is not in syncedTable, auto-seat in first empty seat
+        const isSeated = syncedTable.seats.some((s) => s && s.userId === currentUserId);
+        if (!isSeated) {
+          const emptyIdx = syncedTable.seats.findIndex((s) => s === null);
+          if (emptyIdx !== -1) {
+            syncedTable.seats[emptyIdx] = {
+              seatIndex: emptyIdx,
+              userId: currentUserId,
+              username,
+              avatar,
+              color,
+              isBot: false,
+              chips: currentUserChips || initialChips,
+              hands: [],
+              activeHandIndex: 0,
+              insuranceBet: 0,
+              hasInsurance: false,
+              isReady: false
+            };
+            if (socket && socket.connected) {
+              socket.emit('blackjack_update_state', syncedTable);
+            }
+          }
+        }
         setTable(syncedTable);
       }
     };
@@ -557,11 +582,13 @@ export default function BlackjackGame({
 
   // --- Player In-Turn Actions (Hit, Stand, Double, Split) ---
   const handleHit = (seatIndex: number) => {
-    if (table.phase !== 'PLAYER_TURNS' || table.activeSeatIndex !== seatIndex || isDealing || isDealerPlaying) return;
+    if (table.phase !== 'PLAYER_TURNS' || table.activeSeatIndex !== seatIndex || isDealing || isDealerPlaying || isActionProcessing) return;
     const seat = table.seats[seatIndex];
     if (!seat) return;
     const hand = seat.hands[seat.activeHandIndex];
     if (!hand || hand.result !== 'PLAYING') return;
+
+    setIsActionProcessing(true);
 
     let shoe = [...table.shoe];
     const { card, remainingShoe } = drawCard(shoe);
@@ -573,8 +600,10 @@ export default function BlackjackGame({
     let nextResult: HandResult = 'PLAYING';
     if (score > 21) {
       nextResult = 'BUST';
+      showBanner(`BUST! ${score} puan ile patladınız.`, 'lose', 2500);
     } else if (score === 21) {
       nextResult = 'STAND';
+      showBanner(`21! Mükemmel el 🎯`, 'win', 2500);
     }
 
     const nextSeats = [...table.seats];
@@ -592,20 +621,29 @@ export default function BlackjackGame({
       hands: nextHands
     };
 
-    const nextTable: BlackjackState = { ...table, shoe, seats: nextSeats };
+    const nextTable: BlackjackState = { 
+      ...table, 
+      shoe, 
+      seats: nextSeats,
+      turnExpiresAt: Date.now() + (table.turnTimeLimit || 15) * 1000
+    };
     broadcastTable(nextTable);
 
     if (nextResult !== 'PLAYING') {
       advanceToNextHandOrPlayer(seatIndex);
     }
+
+    setTimeout(() => setIsActionProcessing(false), 300);
   };
 
   const handleStand = (seatIndex: number) => {
-    if (table.phase !== 'PLAYER_TURNS' || table.activeSeatIndex !== seatIndex || isDealing || isDealerPlaying) return;
+    if (table.phase !== 'PLAYER_TURNS' || table.activeSeatIndex !== seatIndex || isDealing || isDealerPlaying || isActionProcessing) return;
     const seat = table.seats[seatIndex];
     if (!seat) return;
     const hand = seat.hands[seat.activeHandIndex];
     if (!hand || hand.result !== 'PLAYING') return;
+
+    setIsActionProcessing(true);
 
     const nextSeats = [...table.seats];
     const nextHands = [...seat.hands];
@@ -620,7 +658,10 @@ export default function BlackjackGame({
 
     const nextTable: BlackjackState = { ...table, seats: nextSeats };
     broadcastTable(nextTable);
+    showBanner(`Kalındı: ${hand.score} puan ✋`, 'info', 1500);
     advanceToNextHandOrPlayer(seatIndex);
+
+    setTimeout(() => setIsActionProcessing(false), 300);
   };
 
   const handleDouble = async (seatIndex: number) => {

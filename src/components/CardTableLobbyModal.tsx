@@ -4,7 +4,7 @@ import Avatar from './Avatar';
 
 export interface CardTableInfo {
   id: string;
-  gameType: 'blackjack' | 'batak';
+  gameType: 'blackjack' | 'batak' | 'poker';
   title: string;
   hostId: number;
   hostName: string;
@@ -29,13 +29,14 @@ export interface CreateTableOptions {
   minBalance?: number;
   minBet?: number;
   maxBet?: number;
-  gameMode?: 'ihale' | 'koz_maca';
+  gameMode?: 'ihale' | 'koz_maca' | 'texas_holdem';
   targetRounds?: number;
 }
 
 interface CardTableLobbyModalProps {
-  gameType: 'blackjack' | 'batak';
+  gameType: 'blackjack' | 'batak' | 'poker';
   isOpen: boolean;
+  initialTab?: 'create' | 'browse';
   onClose: () => void;
   currentUsername?: string;
   currentUserChips?: number;
@@ -47,6 +48,7 @@ interface CardTableLobbyModalProps {
 export default function CardTableLobbyModal({
   gameType,
   isOpen,
+  initialTab = 'create',
   onClose,
   currentUsername = 'Oyuncu',
   currentUserChips = 1000,
@@ -54,11 +56,15 @@ export default function CardTableLobbyModal({
   onJoinTable,
   activeTables
 }: CardTableLobbyModalProps) {
-  const [tab, setTab] = useState<'create' | 'browse'>('create');
+  const [tab, setTab] = useState<'create' | 'browse'>(initialTab);
   
   // Table Configuration States
   const [title, setTitle] = useState<string>(
-    gameType === 'blackjack' ? `${currentUsername}'in Masası` : `${currentUsername}'in Batak Masası`
+    gameType === 'blackjack' 
+      ? `${currentUsername}'in Blackjack Masası` 
+      : gameType === 'poker' 
+      ? `${currentUsername}'in Poker Masası` 
+      : `${currentUsername}'in Batak Masası`
   );
   const [isPrivate, setIsPrivate] = useState<boolean>(false);
   const [passcode, setPasscode] = useState<string>('');

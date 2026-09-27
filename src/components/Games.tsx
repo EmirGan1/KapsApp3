@@ -41,7 +41,7 @@ interface LeaderboardUser {
 }
 
 type GameCategory = 'all' | 'cards' | 'arcade' | 'strategy' | 'active_lobbies';
-type SelectedGameType = 'hub' | 'okey' | 'okey101' | 'uno' | 'drawguess' | 'blackjack' | 'batak';
+type SelectedGameType = 'hub' | 'okey' | 'okey101' | 'uno' | 'drawguess' | 'blackjack' | 'batak' | 'poker';
 
 export default function Games({
   socket,
@@ -65,9 +65,12 @@ export default function Games({
 
   // Active open tables list (Only real user tables, no fake bot tables)
   const [activeTables, setActiveTables] = useState<CardTableInfo[]>([]);
+  const [selectedGameTableId, setSelectedGameTableId] = useState<string | null>(null);
 
   // Modal for creating/browsing card tables
-  const [lobbyModalGame, setLobbyModalGame] = useState<'blackjack' | 'batak' | null>(null);
+  const [lobbyModalGame, setLobbyModalGame] = useState<'blackjack' | 'batak' | 'poker' | null>(null);
+  const [lobbyInitialTab, setLobbyInitialTab] = useState<'create' | 'browse'>('create');
+  const [playMenuGame, setPlayMenuGame] = useState<'blackjack' | 'batak' | 'poker' | null>(null);
   const [blackjackTableOptions, setBlackjackTableOptions] = useState<CreateTableOptions | null>(null);
 
   // Leaderboard state
@@ -249,8 +252,8 @@ export default function Games({
     );
   }
 
-  // Route: Blackjack 21 (NEW)
-  if (selectedGame === 'blackjack') {
+  // Route: Blackjack 21 & Poker
+  if (selectedGame === 'blackjack' || selectedGame === 'poker') {
     return (
       <BlackjackGame
         socket={socket}
@@ -258,9 +261,11 @@ export default function Games({
         username={username}
         avatar={avatar}
         color={color}
+        tableId={selectedGameTableId}
         tableOptions={blackjackTableOptions}
         onBackToHub={() => {
           setSelectedGame('hub');
+          setSelectedGameTableId(null);
           setBlackjackTableOptions(null);
         }}
       />
@@ -276,7 +281,11 @@ export default function Games({
         username={username}
         avatar={avatar}
         color={color}
-        onBackToHub={() => setSelectedGame('hub')}
+        tableId={selectedGameTableId}
+        onBackToHub={() => {
+          setSelectedGame('hub');
+          setSelectedGameTableId(null);
+        }}
       />
     );
   }
@@ -306,9 +315,36 @@ export default function Games({
           <PlayingCard card={{ suit: 'diamonds', rank: '10' }} size="xs" />
         </div>
       ),
-      actionPrimary: 'Masaya Otur',
-      onClick: () => setSelectedGame('blackjack'),
+      actionPrimary: 'Oyna',
+      onClick: () => setPlayMenuGame('blackjack'),
       onOpenLobby: () => setLobbyModalGame('blackjack')
+    },
+    {
+      id: 'poker',
+      title: 'Texas Hold\'em Poker',
+      subtitle: 'VIP Canlı Masalar • Yüksek Bahis & Bot Desteği',
+      category: ['cards'],
+      badge: 'POPÜLER CASINO',
+      badgeColor: 'bg-red-500 text-white',
+      gradient: 'from-red-600 via-rose-500 to-red-800',
+      icon: '♠️',
+      capacity: '2-6 Oyuncu & Bot',
+      activeRooms: activeTables.filter(t => t.gameType === 'poker').length,
+      features: [
+        'Texas Hold\'em Kuralları & Canlı Masa Seçimi',
+        'Flop, Turn, River ve Pot Hesaplama',
+        'Bot Rakipler & Gerçek Zamanlı Sohbet'
+      ],
+      preview: (
+        <div className="flex items-center justify-center -space-x-3 py-1">
+          <PlayingCard card={{ suit: 'spades', rank: 'A' }} size="xs" />
+          <PlayingCard card={{ suit: 'hearts', rank: 'A' }} size="xs" />
+          <PlayingCard card={{ suit: 'diamonds', rank: 'K' }} size="xs" />
+        </div>
+      ),
+      actionPrimary: 'Oyna',
+      onClick: () => setPlayMenuGame('poker'),
+      onOpenLobby: () => setLobbyModalGame('poker')
     },
     {
       id: 'batak',
@@ -333,8 +369,8 @@ export default function Games({
           <PlayingCard card={{ suit: 'hearts', rank: 'A' }} size="xs" />
         </div>
       ),
-      actionPrimary: 'Batak Lobisine Gir',
-      onClick: () => setSelectedGame('batak'),
+      actionPrimary: 'Oyna',
+      onClick: () => setPlayMenuGame('batak'),
       onOpenLobby: () => setLobbyModalGame('batak')
     },
     {
@@ -861,21 +897,94 @@ export default function Games({
 
       </div>
 
+      {/* --- Game Option Selection Modal (Oyna -> Odalar vs Oda Oluştur) --- */}
+      {playMenuGame && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 text-center animate-in zoom-in-95">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center mx-auto text-3xl shadow-lg">
+              {playMenuGame === 'blackjack' ? '🃏' : playMenuGame === 'poker' ? '♠️' : '♣️'}
+            </div>
+
+            <div className="space-y-1">
+              <h2 className="text-xl sm:text-2xl font-black text-white capitalize">
+                {playMenuGame === 'blackjack' ? 'Blackjack 21' : playMenuGame === 'poker' ? 'Texas Hold\'em Poker' : 'Batak'}
+              </h2>
+              <p className="text-xs text-slate-400">
+                Lütfen oyuna başlamak için bir seçenek belirleyin:
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              {/* Option 1: Odalar */}
+              <button
+                onClick={() => {
+                  setLobbyModalGame(playMenuGame);
+                  setLobbyInitialTab('browse');
+                  setPlayMenuGame(null);
+                }}
+                className="w-full py-4 px-5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-extrabold text-sm sm:text-base border border-slate-700 flex items-center justify-between transition-all cursor-pointer transform hover:scale-[1.02] shadow-md group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-500/30 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                    <Users size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-black">Odalar (Açık Masalar)</div>
+                    <div className="text-[11px] text-slate-400 font-medium">Mevcut canlı masalara göz atın ve katılın</div>
+                  </div>
+                </div>
+                <ChevronRight size={18} className="text-slate-400 group-hover:text-white" />
+              </button>
+
+              {/* Option 2: Oda Oluştur */}
+              <button
+                onClick={() => {
+                  setLobbyModalGame(playMenuGame);
+                  setLobbyInitialTab('create');
+                  setPlayMenuGame(null);
+                }}
+                className="w-full py-4 px-5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-sm sm:text-base flex items-center justify-between transition-all cursor-pointer transform hover:scale-[1.02] shadow-lg shadow-emerald-950/40 group"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-white/20 text-white border border-white/30">
+                    <Plus size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-black">Oda Oluştur</div>
+                    <div className="text-[11px] text-emerald-100 font-medium">Özel veya genel yeni bir masa açın</div>
+                  </div>
+                </div>
+                <ChevronRight size={18} className="text-emerald-100" />
+              </button>
+            </div>
+
+            <button
+              onClick={() => setPlayMenuGame(null)}
+              className="w-full py-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white font-bold text-xs transition-colors cursor-pointer"
+            >
+              Vazgeç
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* --- Universal Card Table Lobby / Creator Modal --- */}
       {lobbyModalGame && (
         <CardTableLobbyModal
           gameType={lobbyModalGame}
           isOpen={Boolean(lobbyModalGame)}
+          initialTab={lobbyInitialTab}
           onClose={() => setLobbyModalGame(null)}
           currentUsername={username}
           activeTables={activeTables}
           onCreateTable={(opts) => {
             setBlackjackTableOptions(opts);
-            setSelectedGame(lobbyModalGame);
+            setSelectedGame(lobbyModalGame === 'poker' ? 'blackjack' : lobbyModalGame);
             setLobbyModalGame(null);
           }}
           onJoinTable={(tableId) => {
-            setSelectedGame(lobbyModalGame);
+            setSelectedGameTableId(tableId);
+            setSelectedGame(lobbyModalGame === 'poker' ? 'blackjack' : lobbyModalGame);
             setLobbyModalGame(null);
           }}
         />
