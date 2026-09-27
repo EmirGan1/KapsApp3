@@ -151,22 +151,42 @@ export default function Games({
     const onOkey101Rooms = (rooms: any[]) => setOkey101RoomCount(rooms?.length || 0);
     const onUnoRooms = (rooms: any[]) => setUnoRoomCount(rooms?.length || 0);
     const onDrawGuessRooms = (rooms: any[]) => setDrawguessRoomCount(rooms?.length || 0);
+    const onActiveTables = (tables: CardTableInfo[]) => {
+      if (Array.isArray(tables)) {
+        setActiveTables(tables);
+        setBlackjackRoomCount(tables.filter(t => t.gameType === 'blackjack').length);
+        setBatakRoomCount(tables.filter(t => t.gameType === 'batak').length);
+      }
+    };
 
     socket.on("okey_rooms_list", onOkeyRooms);
     socket.on("okey101_rooms_list", onOkey101Rooms);
     socket.on("uno_rooms_list", onUnoRooms);
     socket.on("drawguess_rooms_list", onDrawGuessRooms);
+    socket.on("active_tables_updated", onActiveTables);
 
     socket.emit("get_okey_rooms");
     socket.emit("get_okey101_rooms");
     socket.emit("get_uno_rooms");
     socket.emit("get_drawguess_rooms");
+    socket.emit("get_active_tables", (tables: CardTableInfo[]) => onActiveTables(tables));
+
+    // HTTP Fallback
+    fetch(getApiUrl("/api/active-tables"))
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success && Array.isArray(data.tables)) {
+          onActiveTables(data.tables);
+        }
+      })
+      .catch(() => {});
 
     return () => {
       socket.off("okey_rooms_list", onOkeyRooms);
       socket.off("okey101_rooms_list", onOkey101Rooms);
       socket.off("uno_rooms_list", onUnoRooms);
       socket.off("drawguess_rooms_list", onDrawGuessRooms);
+      socket.off("active_tables_updated", onActiveTables);
     };
   }, [socket]);
 

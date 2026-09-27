@@ -69,6 +69,20 @@ export default function BatakGame({
 
     socket.on('batak_state', onTableState);
     socket.emit('get_batak_state', { tableId: table.id });
+    socket.emit('register_table', {
+      id: table.id,
+      gameType: 'batak',
+      title: `${username}'in Batak Masası`,
+      hostId: currentUserId,
+      hostName: username,
+      hostAvatar: avatar,
+      playerCount: table.players.filter(p => !p.isBot).length || 1,
+      maxPlayers: 4,
+      botCount: table.players.filter(p => p.isBot).length,
+      status: 'Lobi Bekliyor',
+      gameMode: table.gameMode
+    });
+    socket.emit('batak_update_state', table);
 
     return () => {
       socket.off('batak_state', onTableState);

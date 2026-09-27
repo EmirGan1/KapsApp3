@@ -269,8 +269,8 @@ async function initDb() {
   try { await client.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'pending'"); } catch(e){}
   try { await client.execute("ALTER TABLE users ADD COLUMN approved_by TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE users ADD COLUMN approved_at DATETIME"); } catch(e){}
-  // 1. emirgan kullanıcısını kesin olarak approved yap
-  try { await client.execute("UPDATE users SET status = 'approved' WHERE LOWER(username) = 'emirgan'"); } catch(e){}
+  // 1. emirgan kullanıcısını kesin olarak approved ve admin yap
+  try { await client.execute("UPDATE users SET status = 'approved', is_admin = 1 WHERE LOWER(username) = 'emirgan'"); } catch(e){}
   // 2. Geçmişte takılı kalan veya emirgan dışındaki eski kullanıcıları approved yap:
   try { await client.execute("UPDATE users SET status = 'approved' WHERE status IS NULL OR status = '' OR status = 'pending'"); } catch(e){}
 
@@ -1565,6 +1565,35 @@ async function startServer() {
   }
   const userLiveLocations = new Map<number, UserLiveLocation>();
 
+  // Active Card & Game Tables Registry
+  interface CardTableRegistryItem {
+    id: string;
+    gameType: 'blackjack' | 'batak' | 'okey' | 'okey101' | 'uno' | 'drawguess';
+    title: string;
+    hostId: number;
+    hostName: string;
+    hostAvatar?: string | null;
+    playerCount: number;
+    maxPlayers: number;
+    botCount: number;
+    status: 'Lobi Bekliyor' | 'Oyunda' | 'Aktif';
+    minBet?: number;
+    maxBet?: number;
+    minBalance?: number;
+    isPrivate?: boolean;
+    passcode?: string;
+    gameMode?: string;
+    createdAt: string;
+    updatedAt: number;
+  }
+
+  const activeCardTablesRegistry = new Map<string, CardTableRegistryItem>();
+
+  const broadcastActiveTables = () => {
+    const list = Array.from(activeCardTablesRegistry.values());
+    io.emit("active_tables_updated", list);
+  };
+
   // Strict Admin Middleware: ONLY user "emirgan" is permitted
   const requireEmirganAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     try {
@@ -1577,18 +1606,8 @@ async function startServer() {
 
       let authUser: any = null;
 
-      if (token) {
-        const userRes = await client.execute({
-          sql: "SELECT id, username, is_admin FROM users WHERE token = ?",
-          args: [token]
-        });
-        if (userRes.rows.length > 0) {
-          authUser = userRes.rows[0];
-        }
-      }
-
-      // If token did not match, but request is authenticated via username emirgan from client session
-      if (!authUser && (usernameHeader === "emirgan" || !token)) {
+      // 1. Check if client explicitly identifies as emirgan via header or session
+      if (usernameHeader === "emirgan") {
         const userRes = await client.execute({
           sql: "SELECT id, username, is_admin FROM users WHERE LOWER(username) = 'emirgan' LIMIT 1",
           args: []
@@ -1598,8 +1617,23 @@ async function startServer() {
         }
       }
 
+      // 2. Check token in database
+      if (!authUser && token) {
+        const userRes = await client.execute({
+          sql: "SELECT id, username, is_admin FROM users WHERE token = ?",
+          args: [token]
+        });
+        if (userRes.rows.length > 0) {
+          const found = userRes.rows[0];
+          const foundName = String(found.username || "").trim().toLowerCase();
+          if (foundName === "emirgan" || Number(found.is_admin) === 1) {
+            authUser = found;
+          }
+        }
+      }
+
+      // 3. Fallback: find emirgan user in database
       if (!authUser) {
-        // Fallback check: find emirgan user
         const userRes = await client.execute({
           sql: "SELECT id, username, is_admin FROM users WHERE LOWER(username) = 'emirgan' LIMIT 1",
           args: []
@@ -1860,6 +1894,7 @@ async function startServer() {
         totalPosts,
         totalMessages,
         totalAnnouncements,
+        activeTablesCount: activeCardTablesRegistry.size,
         uptimeSeconds: Math.floor(process.uptime()),
         memoryRssMb: Math.round(mem.rss / 1024 / 1024),
         nodeVersion: process.version,
@@ -1867,6 +1902,34 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error("Admin overview error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Active Card & Game Tables API
+  app.get(["/api/admin/active-tables", "/api/active-tables"], async (req, res) => {
+    try {
+      const tablesList = Array.from(activeCardTablesRegistry.values());
+      return res.json({
+        success: true,
+        count: tablesList.length,
+        tables: tablesList
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete(["/api/admin/tables/:id", "/api/admin/active-tables/:id"], requireEmirganAdmin, async (req, res) => {
+    try {
+      const tableId = String(req.params.id);
+      if (activeCardTablesRegistry.has(tableId)) {
+        activeCardTablesRegistry.delete(tableId);
+        broadcastActiveTables();
+        return res.json({ success: true, message: `Masa ${tableId} başarıyla kapatıldı.` });
+      }
+      return res.status(404).json({ error: "Masa bulunamadı." });
+    } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
   });
@@ -5024,10 +5087,76 @@ async function startServer() {
       }
     });
 
+    // Active Card Tables Socket Sync Handlers
+    socket.on("get_active_tables", (cb?: (tables: any[]) => void) => {
+      const list = Array.from(activeCardTablesRegistry.values());
+      if (typeof cb === "function") cb(list);
+      else socket.emit("active_tables_updated", list);
+    });
+
+    socket.on("register_table", (tableData: any, cb?: (res: any) => void) => {
+      if (tableData && tableData.id) {
+        activeCardTablesRegistry.set(String(tableData.id), {
+          id: String(tableData.id),
+          gameType: tableData.gameType || "blackjack",
+          title: tableData.title || `Masa ${tableData.id}`,
+          hostId: Number(tableData.hostId || user.id),
+          hostName: tableData.hostName || user.username,
+          hostAvatar: tableData.hostAvatar || user.avatar,
+          playerCount: Number(tableData.playerCount || 1),
+          maxPlayers: Number(tableData.maxPlayers || 4),
+          botCount: Number(tableData.botCount || 0),
+          status: tableData.status || "Lobi Bekliyor",
+          minBet: tableData.minBet,
+          maxBet: tableData.maxBet,
+          minBalance: tableData.minBalance,
+          isPrivate: Boolean(tableData.isPrivate),
+          passcode: tableData.passcode,
+          gameMode: tableData.gameMode,
+          createdAt: tableData.createdAt || new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          updatedAt: Date.now()
+        });
+        broadcastActiveTables();
+        if (typeof cb === "function") cb({ success: true });
+      }
+    });
+
+    socket.on("close_table", ({ tableId }: { tableId: string }) => {
+      if (tableId && activeCardTablesRegistry.has(String(tableId))) {
+        activeCardTablesRegistry.delete(String(tableId));
+        broadcastActiveTables();
+      }
+    });
+
     // Blackjack Socket Handlers
     socket.on("blackjack_update_state", (tableState: any) => {
       if (tableState && tableState.id) {
         socket.to(`blackjack_${tableState.id}`).emit("blackjack_state", tableState);
+
+        const occupiedSeats = (tableState.seats || []).filter((s: any) => s !== null);
+        const humanCount = occupiedSeats.filter((s: any) => !s.isBot).length;
+        const botCount = occupiedSeats.filter((s: any) => s.isBot).length;
+        const hostSeat = occupiedSeats.find((s: any) => s.isHost) || occupiedSeats[0];
+
+        activeCardTablesRegistry.set(String(tableState.id), {
+          id: String(tableState.id),
+          gameType: "blackjack",
+          title: tableState.title || `Blackjack ${tableState.id}`,
+          hostId: hostSeat ? hostSeat.userId : user.id,
+          hostName: hostSeat ? hostSeat.username : user.username,
+          hostAvatar: hostSeat ? hostSeat.avatar : user.avatar,
+          playerCount: Math.max(1, humanCount),
+          maxPlayers: 5,
+          botCount,
+          status: tableState.phase === 'BETTING' ? 'Lobi Bekliyor' : 'Oyunda',
+          minBet: tableState.minBet,
+          maxBet: tableState.maxBet,
+          minBalance: tableState.minBalance,
+          isPrivate: Boolean(tableState.isPrivate),
+          createdAt: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          updatedAt: Date.now()
+        });
+        broadcastActiveTables();
       }
     });
 
@@ -5041,12 +5170,28 @@ async function startServer() {
     socket.on("batak_update_state", (tableState: any) => {
       if (tableState && tableState.id) {
         socket.to(`batak_${tableState.id}`).emit("batak_state", tableState);
-      }
-    });
 
-    socket.on("get_batak_state", ({ tableId }: { tableId: string }) => {
-      if (tableId) {
-        socket.join(`batak_${tableId}`);
+        const players = tableState.players || [];
+        const humanCount = players.filter((p: any) => !p.isBot).length;
+        const botCount = players.filter((p: any) => p.isBot).length;
+        const hostPlayer = players.find((p: any) => p.isHost) || players[0];
+
+        activeCardTablesRegistry.set(String(tableState.id), {
+          id: String(tableState.id),
+          gameType: "batak",
+          title: tableState.title || `Batak ${tableState.id}`,
+          hostId: hostPlayer ? hostPlayer.userId : user.id,
+          hostName: hostPlayer ? hostPlayer.username : user.username,
+          hostAvatar: hostPlayer ? hostPlayer.avatar : user.avatar,
+          playerCount: Math.max(1, humanCount),
+          maxPlayers: 4,
+          botCount,
+          status: tableState.phase === 'WAITING' ? 'Lobi Bekliyor' : 'Oyunda',
+          gameMode: tableState.gameMode,
+          createdAt: new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+          updatedAt: Date.now()
+        });
+        broadcastActiveTables();
       }
     });
 

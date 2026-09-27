@@ -153,6 +153,22 @@ export default function BlackjackGame({
     socket.on('blackjack_state', onTableState);
     socket.on('chips_updated', onChipsUpdated);
     socket.emit('get_blackjack_state', { tableId: table.id });
+    socket.emit('register_table', {
+      id: table.id,
+      gameType: 'blackjack',
+      title: `${username}'in Masası`,
+      hostId: currentUserId,
+      hostName: username,
+      hostAvatar: avatar,
+      playerCount: table.seats.filter(s => s && !s.isBot).length || 1,
+      maxPlayers: 5,
+      botCount: table.seats.filter(s => s && s.isBot).length,
+      status: 'Lobi Bekliyor',
+      minBet: table.minBet,
+      maxBet: table.maxBet,
+      minBalance: table.minBalance
+    });
+    socket.emit('blackjack_update_state', table);
 
     return () => {
       socket.off('blackjack_state', onTableState);

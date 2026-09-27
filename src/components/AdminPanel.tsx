@@ -5,7 +5,7 @@ import {
   RefreshCw, Megaphone, Search, Clock, 
   Unlock, Crown, AlertTriangle, Eye, UserX,
   Radio, HardDrive, Terminal, X, Check, Edit3, 
-  ShieldAlert, Ban, UserCheck, ShieldCheck
+  ShieldAlert, Ban, UserCheck, ShieldCheck, Gamepad2
 } from "lucide-react";
 import { getApiUrl } from "../utils/api";
 
@@ -81,7 +81,7 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ socket, currentUsername, onUserClick, onPendingCountChange }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"pending" | "users" | "hardware" | "broadcast" | "logs">("pending");
+  const [activeTab, setActiveTab] = useState<"pending" | "users" | "tables" | "hardware" | "broadcast" | "logs">("pending");
   const [loading, setLoading] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   
@@ -91,6 +91,7 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [bannedHardware, setBannedHardware] = useState<BannedHardwareItem[]>([]);
   const [logs, setLogs] = useState<AccessLogItem[]>([]);
+  const [activeTables, setActiveTables] = useState<any[]>([]);
   
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -204,18 +205,56 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
     }
   }, []);
 
+  const fetchActiveTables = useCallback(async () => {
+    try {
+      const res = await fetch(getApiUrl("/api/admin/active-tables"), { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.tables)) {
+          setActiveTables(data.tables);
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching active tables:", e);
+    }
+  }, []);
+
+  const handleCloseTable = async (tableId: string) => {
+    if (!window.confirm(`Masa (${tableId}) kapatılacak. Onaylıyor musunuz?`)) return;
+    setActionLoading(true);
+    try {
+      const res = await fetch(getApiUrl(`/api/admin/tables/${tableId}`), {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Masa ${tableId} kapatıldı.`, "success");
+        fetchActiveTables();
+      } else {
+        showToast(data.error || "Masa kapatılamadı.", "error");
+      }
+    } catch (err: any) {
+      showToast("Hata: " + err.message, "error");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   // Initial load & socket listeners
   useEffect(() => {
     fetchPendingUsers();
     fetchUsers();
     fetchOverview();
+    fetchActiveTables();
 
     const interval = setInterval(() => {
       fetchPendingUsers();
-    }, 10000);
+      fetchActiveTables();
+    }, 5000);
 
     return () => clearInterval(interval);
-  }, [fetchPendingUsers, fetchUsers, fetchOverview]);
+  }, [fetchPendingUsers, fetchUsers, fetchOverview, fetchActiveTables]);
 
   useEffect(() => {
     if (!socket) return;
@@ -224,6 +263,13 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
       fetchPendingUsers();
       fetchUsers();
       fetchOverview();
+      fetchActiveTables();
+    };
+
+    const handleActiveTablesUpdate = (tables: any[]) => {
+      if (Array.isArray(tables)) {
+        setActiveTables(tables);
+      }
     };
 
     socket.on("user:pending_approval", handlePendingUpdate);
@@ -233,8 +279,13 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
     socket.on("user_banned", handlePendingUpdate);
     socket.on("user_unbanned", handlePendingUpdate);
     socket.on("user_deleted", handlePendingUpdate);
+    socket.on("active_tables_updated", handleActiveTablesUpdate);
     socket.on("online_users", () => {
       fetchUsers();
+    });
+
+    socket.emit("get_active_tables", (tables: any[]) => {
+      if (Array.isArray(tables)) setActiveTables(tables);
     });
 
     return () => {
@@ -245,15 +296,17 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
       socket.off("user_banned", handlePendingUpdate);
       socket.off("user_unbanned", handlePendingUpdate);
       socket.off("user_deleted", handlePendingUpdate);
+      socket.off("active_tables_updated", handleActiveTablesUpdate);
       socket.off("online_users");
     };
-  }, [socket, fetchPendingUsers, fetchUsers, fetchOverview]);
+  }, [socket, fetchPendingUsers, fetchUsers, fetchOverview, fetchActiveTables]);
 
   // Tab change handler
-  const handleTabChange = (tab: "pending" | "users" | "hardware" | "broadcast" | "logs") => {
+  const handleTabChange = (tab: "pending" | "users" | "tables" | "hardware" | "broadcast" | "logs") => {
     setActiveTab(tab);
     if (tab === "pending") fetchPendingUsers();
     if (tab === "users") fetchUsers();
+    if (tab === "tables") fetchActiveTables();
     if (tab === "hardware") fetchBannedHardware();
     if (tab === "logs") { fetchLogs(); fetchOverview(); }
   };
@@ -550,6 +603,10 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
               <span className="text-[10px] uppercase font-bold tracking-widest px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
                 ROOT YÖNETİCİ
               </span>
+              <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-black">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                <span>PANEL AKTİF</span>
+              </span>
             </div>
             <p className="text-xs text-slate-400">
               Kayıt onayları, kullanıcı moderasyonu, çevrim içi durumu ve donanım güvenliği
@@ -608,6 +665,21 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
               {users.filter(u => u.isOnline).length} Online
             </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => handleTabChange("tables")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer ${
+            activeTab === "tables"
+              ? "bg-slate-950 text-emerald-400 border-emerald-500 shadow-sm"
+              : "text-slate-400 hover:text-slate-200 border-transparent hover:bg-slate-800/50"
+          }`}
+        >
+          <Gamepad2 size={16} />
+          <span>🎴 Aktif Masalar ({activeTables.length})</span>
+          {activeTables.length > 0 && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
           )}
         </button>
 
@@ -953,6 +1025,111 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
                   </tbody>
                 </table>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB: AKTİF MASALAR & ODALAR (MASA 21 SENKRONİZASYONU)     */}
+        {/* ========================================================= */}
+        {activeTab === "tables" && (
+          <div className="space-y-4 max-w-5xl mx-auto">
+            <div className="bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-500/30 rounded-2xl p-5 shadow-lg">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-emerald-500 text-slate-950 rounded-xl font-black shadow-md">
+                    <Gamepad2 size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                      <span>Anlık Açık Oyun Masaları ve Odalar</span>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-500 text-slate-950">
+                        {activeTables.length} Açık Masa
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Masa 21 ve saatlik/canlı açılan tüm oyundaki masalar anlık senkronize olarak burada listelenir.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={fetchActiveTables}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 border border-slate-700 flex items-center gap-2 shrink-0 cursor-pointer"
+                >
+                  <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+                  <span>Yenile</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+              {activeTables.length === 0 ? (
+                <div className="p-12 text-center text-slate-400 space-y-2">
+                  <p className="text-3xl">🎴</p>
+                  <p className="text-sm font-semibold">Şu anda açık canlı masa bulunmuyor.</p>
+                  <p className="text-xs text-slate-500">Kullanıcılar masa açtığında veya Masa 21 oluşturulduğunda burada anında görüntülenecektir.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
+                      <tr>
+                        <th className="p-3">Masa İsmi & ID</th>
+                        <th className="p-3">Oyun Tipi</th>
+                        <th className="p-3">Masa Sahibi (Host)</th>
+                        <th className="p-3">Oyuncular & Bot</th>
+                        <th className="p-3">Durum</th>
+                        <th className="p-3">Açılış Zamanı</th>
+                        <th className="p-3 text-right">İşlem</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {activeTables.map((t) => (
+                        <tr key={t.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-bold text-white">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">{t.gameType === 'blackjack' ? '🃏' : t.gameType === 'batak' ? '♠️' : '🀄'}</span>
+                              <div>
+                                <div>{t.title || `Masa ${t.id}`}</div>
+                                <div className="text-[10px] text-slate-500 font-mono">ID: {t.id}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3 capitalize font-bold text-amber-400">
+                            {t.gameType} {t.gameMode ? `(${t.gameMode})` : ''}
+                          </td>
+                          <td className="p-3 font-semibold text-slate-200">
+                            {t.hostName} (ID: {t.hostId})
+                          </td>
+                          <td className="p-3 text-slate-300">
+                            <span className="font-bold text-emerald-400">{t.playerCount}/{t.maxPlayers || 4}</span> Oyuncu
+                            {t.botCount > 0 && <span className="text-slate-500 text-[10px] ml-1">({t.botCount} Bot)</span>}
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              t.status === 'Oyunda' ? 'bg-amber-950 text-amber-300 border border-amber-800' : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                            }`}>
+                              ● {t.status}
+                            </span>
+                          </td>
+                          <td className="p-3 text-slate-400 font-mono text-[11px]">
+                            {t.createdAt || '-'}
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => handleCloseTable(t.id)}
+                              className="px-2.5 py-1 rounded-lg bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 font-bold text-[11px] transition-all cursor-pointer"
+                            >
+                              Masayı Kapat
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
