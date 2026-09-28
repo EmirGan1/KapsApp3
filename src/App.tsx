@@ -22,6 +22,7 @@ import SubjectsDirectory from "./components/SubjectsDirectory";
 import { CallProvider } from "./context/CallContext";
 import IncomingCallNotification from "./components/IncomingCallNotification";
 import ActiveCallPanel from "./components/ActiveCallPanel";
+import VoiceCallInviteModal, { VoiceCallInvite } from "./components/VoiceCallInviteModal";
 import { getSocketUrl, getApiUrl } from "./utils/api";
 import { getCachedHardwareFingerprint, getHardwareFingerprint } from "./utils/deviceFingerprint";
 
@@ -78,6 +79,33 @@ export default function App() {
   const toastTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   const [activeDmChatUserId, setActiveDmChatUserId] = useState<number | null>(null);
   const activeDmChatUserIdRef = useRef<number | null>(null);
+
+  // Incoming Voice Room Invite State (VoiceCallInviteModal)
+  const [voiceInvite, setVoiceInvite] = useState<VoiceCallInvite | null>(null);
+
+  const handleAcceptVoiceInvite = (invite: VoiceCallInvite) => {
+    if (socket) {
+      socket.emit("voice:invite_response", {
+        accepted: true,
+        roomId: invite.roomId,
+        inviterId: invite.inviter.id
+      });
+      socket.emit("join_voice_room", { roomId: invite.roomId });
+    }
+    setVoiceInvite(null);
+    setActiveTab("voice");
+  };
+
+  const handleRejectVoiceInvite = (invite: VoiceCallInvite) => {
+    if (socket) {
+      socket.emit("voice:invite_response", {
+        accepted: false,
+        roomId: invite.roomId,
+        inviterId: invite.inviter.id
+      });
+    }
+    setVoiceInvite(null);
+  };
 
   const dismissToast = (id: string) => {
     const timer = toastTimersRef.current.get(id);
@@ -177,8 +205,17 @@ export default function App() {
   const activeTabRef = useRef(activeTab);
   useEffect(() => {
     activeTabRef.current = activeTab;
-    activeDmChatUserIdRef.current = activeTab === "chats" ? activeDmChatUserId : null;
-  }, [activeTab, activeDmChatUserId]);
+    const currentActiveDmId = activeTab === "chats" ? activeDmChatUserId : null;
+    activeDmChatUserIdRef.current = currentActiveDmId;
+
+    if (socket) {
+      if (currentActiveDmId) {
+        socket.emit("dm:enter_chat", { partnerId: currentActiveDmId });
+      } else {
+        socket.emit("dm:leave_chat");
+      }
+    }
+  }, [activeTab, activeDmChatUserId, socket]);
 
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem("lan_theme") === "dark");
 
@@ -301,6 +338,12 @@ export default function App() {
       });
       
       newSocket.on("new_notification", (notif: any) => {
+        // Smart suppression: If user is actively inside the DM chat with the sender, do NOT show toast or increment badge
+        const senderId = Number(notif?.sender_id || notif?.senderId);
+        if ((notif.type === "new_message" || notif.type === "dm") && activeTabRef.current === "chats" && activeDmChatUserIdRef.current && activeDmChatUserIdRef.current === senderId) {
+          return;
+        }
+
         setUnreadNotificationsCount(prev => prev + 1);
         if (notif && notif.content) {
           let title = "Yeni Bildirim";
@@ -335,6 +378,10 @@ export default function App() {
       });
 
       newSocket.on("new_message", (msg: any) => {
+        const senderId = Number(msg?.sender);
+        if (activeTabRef.current === 'chats' && activeDmChatUserIdRef.current && activeDmChatUserIdRef.current === senderId) {
+          return; // Suppress unread count for current open DM
+        }
         if (activeTabRef.current !== 'chats') {
           setUnreadDmCount(prev => prev + 1);
         }
@@ -366,6 +413,10 @@ export default function App() {
             senderName: data?.username,
           });
         }
+      });
+
+      newSocket.on("voice:invite_user", (data: VoiceCallInvite) => {
+        setVoiceInvite(data);
       });
 
       newSocket.on("pending_count_updated", fetchPendingApprovals);
@@ -891,9 +942,14 @@ export default function App() {
         </nav>
       </div>
 
-      {/* Global Birebir Sesli Arama Modülü Katmanları */}
+      {/* Global Birebir Sesli Arama ve Sesli Oda Davet Modülü Katmanları */}
       <IncomingCallNotification />
       <ActiveCallPanel />
+      <VoiceCallInviteModal 
+        invite={voiceInvite}
+        onAccept={handleAcceptVoiceInvite}
+        onReject={handleRejectVoiceInvite}
+      />
     </div>
     </CallProvider>
   );

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { Socket } from 'socket.io-client';
 import { 
   Mic, 
   MicOff, 
@@ -18,11 +19,13 @@ import {
   MonitorOff,
   Volume2,
   Volume1,
-  ChevronUp
+  ChevronUp,
+  UserPlus
 } from 'lucide-react';
 import { VoiceParticipant } from '../types';
 import Avatar from './Avatar';
 import VideoCell from './VideoCell';
+import VoiceInviteModal from './VoiceInviteModal';
 
 interface VideoTileProps {
   participant: VoiceParticipant;
@@ -237,6 +240,7 @@ export const VideoTile = React.memo(({
 VideoTile.displayName = 'VideoTile';
 
 interface VideoRoomViewProps {
+  roomId?: string;
   roomName: string;
   hostUsername: string;
   maxParticipants: number;
@@ -253,6 +257,7 @@ interface VideoRoomViewProps {
   isDeafened: boolean;
   isSpeakingLocal: boolean;
   mediaPermissionError: string | null;
+  socket?: Socket | null;
   onToggleMute: () => void;
   onToggleVideo: () => void;
   onToggleScreenShare?: (withAudio?: boolean) => void;
@@ -267,6 +272,7 @@ interface VideoRoomViewProps {
 }
 
 export function VideoRoomView({
+  roomId,
   roomName,
   hostUsername,
   maxParticipants,
@@ -283,6 +289,7 @@ export function VideoRoomView({
   isDeafened,
   isSpeakingLocal,
   mediaPermissionError,
+  socket,
   onToggleMute,
   onToggleVideo,
   onToggleScreenShare,
@@ -305,6 +312,7 @@ export function VideoRoomView({
 
   const isSpotlightMode = Boolean(screenSharer);
   const [isStartingShare, setIsStartingShare] = useState(false);
+  const [showInviteModal, setShowInviteModal] = useState(false);
 
   // Dynamic Smart Grid calculation tailored for mobile & desktop
   const getGridClasses = (total: number) => {
@@ -401,14 +409,25 @@ export function VideoRoomView({
           </div>
         </div>
 
-        {/* Leave Room Button */}
-        <button
-          onClick={onLeaveRoom}
-          className="min-h-[38px] px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
-        >
-          <PhoneOff size={15} />
-          <span className="hidden xs:inline">Ayrıl</span>
-        </button>
+        {/* Header Actions: Invite User & Leave Room */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowInviteModal(true)}
+            className="min-h-[38px] px-3.5 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-1.5 transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
+            title="Kullanıcı Davet Et"
+          >
+            <UserPlus size={15} />
+            <span className="hidden xs:inline">Davet Et</span>
+          </button>
+
+          <button
+            onClick={onLeaveRoom}
+            className="min-h-[38px] px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 rounded-xl font-bold text-xs sm:text-sm flex items-center gap-2 transition-all active:scale-95 shadow-sm shrink-0 cursor-pointer"
+          >
+            <PhoneOff size={15} />
+            <span className="hidden xs:inline">Ayrıl</span>
+          </button>
+        </div>
       </div>
 
       {/* Permission alert */}
@@ -594,6 +613,18 @@ export function VideoRoomView({
           </div>
         </div>
       </div>
+
+      {/* Voice Invite Modal */}
+      {showInviteModal && (
+        <VoiceInviteModal
+          isOpen={showInviteModal}
+          onClose={() => setShowInviteModal(false)}
+          roomId={roomId || ''}
+          roomName={roomName}
+          socket={socket || null}
+          currentUserId={currentUserId}
+        />
+      )}
     </div>
   );
 }

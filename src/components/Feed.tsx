@@ -16,14 +16,26 @@ import {
   Folder, 
   Sparkles,
   ChevronDown,
-  ArrowLeft
+  ArrowLeft,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Layers
 } from "lucide-react";
 import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
 import AdminModerationMenu from "./AdminModerationMenu";
 import PostMediaFrame from "./PostMediaFrame";
+import CourseFilesManager from "./CourseFilesManager";
 import { getApiUrl } from "../utils/api";
 import { compressImage } from "../utils/imageCompressor";
+
+export interface SelectedMediaItem {
+  file: File;
+  preview: string;
+  type: 'image' | 'video';
+  name: string;
+}
 
 export default function Feed({
   socket,
@@ -50,8 +62,7 @@ export default function Feed({
   const [folderViewMode, setFolderViewMode] = useState<"feed" | "gallery">("feed");
 
   const [newPostCaption, setNewPostCaption] = useState("");
-  const [newPostMedia, setNewPostMedia] = useState<File | null>(null);
-  const [newPostMediaType, setNewPostMediaType] = useState<"image" | "video">("image");
+  const [selectedMediaList, setSelectedMediaList] = useState<SelectedMediaItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<number | null>(null);
@@ -117,12 +128,25 @@ export default function Feed({
         }
       };
       socket.on("post_deleted", onPostDeleted);
+      socket.on("post:deleted", onPostDeleted);
+
+      const onCommentDeleted = (data: any) => {
+        const deletedCommentId = Number(data?.commentId || data?.id || data);
+        if (!isNaN(deletedCommentId)) {
+          setComments((prev) => prev.filter((c) => Number(c.id) !== deletedCommentId));
+        }
+      };
+      socket.on("comment_deleted", onCommentDeleted);
+      socket.on("comment:deleted", onCommentDeleted);
 
       return () => {
         socket.off("feed_updated", loadData);
         socket.off("stories_updated", loadData);
         socket.off("new_post", onNewPost);
         socket.off("post_deleted", onPostDeleted);
+        socket.off("post:deleted", onPostDeleted);
+        socket.off("comment_deleted", onCommentDeleted);
+        socket.off("comment:deleted", onCommentDeleted);
       };
     }
   }, [socket, activeSubject]);
@@ -258,59 +282,105 @@ export default function Feed({
   }, [posts, comments, activeCommentsPostId]);
 
   const handleMediaSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.type.startsWith("video/")) {
-      setNewPostMedia(file);
-      setNewPostMediaType("video");
-    } else {
-      try {
-        const compressed = await compressImage(file, { maxWidth: 1920, maxHeight: 1080, quality: 0.85 });
-        setNewPostMedia(compressed.file);
-        setNewPostMediaType("image");
-      } catch {
-        setNewPostMedia(file);
-        setNewPostMediaType("image");
+    const rawFiles = e.target.files;
+    if (!rawFiles || rawFiles.length === 0) return;
+
+    const fileList = Array.from(rawFiles).slice(0, 50 - selectedMediaList.length);
+    const newItems: SelectedMediaItem[] = [];
+
+    for (const file of fileList) {
+      if (file.type.startsWith("video/")) {
+        newItems.push({
+          file,
+          preview: URL.createObjectURL(file),
+          type: "video",
+          name: file.name
+        });
+      } else {
+        try {
+          const compressed = await compressImage(file, { maxWidth: 1920, maxHeight: 1080, quality: 0.85 });
+          newItems.push({
+            file: compressed.file,
+            preview: URL.createObjectURL(compressed.file),
+            type: "image",
+            name: file.name
+          });
+        } catch {
+          newItems.push({
+            file,
+            preview: URL.createObjectURL(file),
+            type: "image",
+            name: file.name
+          });
+        }
       }
     }
+
+    setSelectedMediaList((prev) => [...prev, ...newItems]);
+    e.target.value = "";
+  };
+
+  const handleRemoveMedia = (index: number) => {
+    setSelectedMediaList((prev) => {
+      const target = prev[index];
+      if (target?.preview) URL.revokeObjectURL(target.preview);
+      return prev.filter((_, i) => i !== index);
+    });
   };
 
   const handlePostSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const captionTrimmed = newPostCaption.trim();
-    if (!captionTrimmed && !newPostMedia) return;
+    if (!captionTrimmed && selectedMediaList.length === 0) return;
     if (isSubmitting) return;
 
     setIsSubmitting(true);
-    let mediaUrl: string | null = null;
-    let finalMediaType = newPostMediaType;
+    let uploadedAttachments: any[] = [];
+    let firstMediaUrl: string | null = null;
+    let firstMediaType: "image" | "video" = "image";
 
-    if (newPostMedia) {
-      const formData = new FormData();
-      formData.append("file", newPostMedia);
+    if (selectedMediaList.length > 0) {
       try {
-        const res = await fetch(getApiUrl("/api/upload"), { method: "POST", body: formData });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `Dosya yüklenemedi (${res.status})`);
+        if (selectedMediaList.length === 1) {
+          const formData = new FormData();
+          formData.append("file", selectedMediaList[0].file);
+          const res = await fetch(getApiUrl("/api/upload"), { method: "POST", body: formData });
+          if (!res.ok) throw new Error("Dosya yüklenemedi.");
+          const data = await res.json();
+          firstMediaUrl = data.url;
+          firstMediaType = data.media_type === "video" ? "video" : "image";
+          uploadedAttachments = [{
+            url: data.url,
+            media_type: firstMediaType,
+            original_name: data.original_name,
+            size: data.size
+          }];
+        } else {
+          const formData = new FormData();
+          selectedMediaList.forEach((item) => {
+            formData.append("files", item.file);
+          });
+          const res = await fetch(getApiUrl("/api/upload-multiple"), { method: "POST", body: formData });
+          if (!res.ok) throw new Error("Çoklu dosya yüklenemedi.");
+          const data = await res.json();
+          if (data.files && Array.isArray(data.files)) {
+            uploadedAttachments = data.files;
+            firstMediaUrl = data.files[0]?.url || null;
+            firstMediaType = data.files[0]?.media_type === "video" ? "video" : "image";
+          }
         }
-        const data = await res.json();
-        if (!data.url) {
-          throw new Error("Yüklenen dosya URL'si alınamadı.");
-        }
-        mediaUrl = data.url;
-        if (data.media_type === "video") finalMediaType = "video";
       } catch (err: any) {
         console.error("Media upload error:", err);
-        alert(err.message || "Dosya yüklenirken bir hata oluştu.");
+        alert(err.message || "Dosyalar yüklenirken bir hata oluştu.");
         setIsSubmitting(false);
         return;
       }
     }
 
     const payload = {
-      image: mediaUrl || null,
-      media_type: finalMediaType,
+      image: firstMediaUrl || null,
+      media_type: firstMediaType,
+      attachments: uploadedAttachments.length > 0 ? JSON.stringify(uploadedAttachments) : null,
       caption: captionTrimmed,
       subject: activeSubject || null
     };
@@ -336,7 +406,7 @@ export default function Feed({
 
     const onSuccess = (createdPost?: any) => {
       setNewPostCaption("");
-      setNewPostMedia(null);
+      setSelectedMediaList([]);
       setIsSubmitting(false);
       if (createdPost && createdPost.id) {
         setPosts((prev) => {
@@ -714,11 +784,11 @@ export default function Feed({
 
         {/* Posts & Feed Body (relative z-10 ensures it stays under sticky top z-[50]) */}
         <div className="relative z-10">
-          {/* Create Post Form */}
-          <div className="bg-white dark:bg-slate-900 p-4 my-4 shadow-sm border border-slate-100 dark:border-slate-800 md:rounded-2xl mx-0 md:mx-4 lg:mx-0 transition-colors duration-200">
+        {/* Create Post Form */}
+        <div className="bg-white dark:bg-slate-900 p-4 my-4 shadow-sm border border-slate-100 dark:border-slate-800 md:rounded-2xl mx-0 md:mx-4 lg:mx-0 transition-colors duration-200">
           <form onSubmit={handlePostSubmit}>
             <textarea
-              placeholder={activeSubject ? `${activeSubject} klasöründe fotoğraf, video veya düşünce paylaş...` : "Ne düşünüyorsun? Fotoğraf veya video paylaş... (Ctrl+Enter ile paylaş)"}
+              placeholder={activeSubject ? `${activeSubject} klasöründe fotoğraf, video veya düşünce paylaş... (50 dosyaya kadar)` : "Ne düşünüyorsun? Fotoğraf veya video paylaş... (Ctrl+Enter ile paylaş)"}
               className="w-full bg-transparent border-none focus:ring-0 resize-none mb-3 text-slate-700 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-500 outline-none p-2 text-base md:text-lg"
               rows={2}
               value={newPostCaption}
@@ -731,39 +801,67 @@ export default function Feed({
               }}
             />
 
-            {/* Media Preview before uploading */}
-            {newPostMedia && (
-              <div className="relative mb-3 bg-black rounded-xl overflow-hidden max-h-72 flex items-center justify-center">
-                {newPostMediaType === "video" ? (
-                  <video
-                    src={URL.createObjectURL(newPostMedia)}
-                    controls
-                    className="max-h-72 w-full object-contain"
-                  />
-                ) : (
-                  <img
-                    src={URL.createObjectURL(newPostMedia)}
-                    alt="Önizleme"
-                    className="max-h-72 w-full object-contain"
-                  />
-                )}
-                <button
-                  type="button"
-                  onClick={() => setNewPostMedia(null)}
-                  className="absolute top-2 right-2 bg-black/70 hover:bg-black text-white rounded-full p-1.5 text-xs transition-colors cursor-pointer"
-                >
-                  ✕
-                </button>
+            {/* Multi-Media Thumbnail Grid Preview before uploading (Up to 50 files) */}
+            {selectedMediaList.length > 0 && (
+              <div className="mb-3">
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-semibold mb-2">
+                  <span>Seçilen Medyalar ({selectedMediaList.length}/50)</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMediaList([])}
+                    className="text-rose-500 hover:underline cursor-pointer text-[11px]"
+                  >
+                    Tümünü Temizle
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-64 overflow-y-auto p-1 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/80">
+                  {selectedMediaList.map((item, idx) => (
+                    <div key={idx} className="relative aspect-square rounded-xl overflow-hidden bg-black group border border-slate-700/50 shadow-2xs">
+                      {item.type === "video" ? (
+                        <div className="w-full h-full flex items-center justify-center bg-slate-900 relative">
+                          <video src={item.preview} className="w-full h-full object-cover opacity-75" />
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <Film size={20} className="text-white drop-shadow-md" />
+                          </div>
+                        </div>
+                      ) : (
+                        <img
+                          src={item.preview}
+                          alt={item.name}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover"
+                        />
+                      )}
+                      
+                      {/* Remove Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveMedia(idx)}
+                        className="absolute top-1 right-1 bg-rose-600/90 hover:bg-rose-600 text-white rounded-full p-1 text-xs shadow-md transition-all active:scale-95 cursor-pointer z-10"
+                        title="Kaldır"
+                      >
+                        <X size={12} />
+                      </button>
+                      
+                      <span className="absolute bottom-1 left-1 bg-black/60 backdrop-blur-xs text-[9px] text-white px-1.5 py-0.5 rounded font-mono">
+                        {idx + 1}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
             <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-3">
               <div className="flex items-center gap-1">
-                <label className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-3 py-2 rounded-full cursor-pointer transition-colors flex items-center gap-2">
+                <label className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-3 py-2 rounded-full cursor-pointer transition-colors flex items-center gap-2 text-sm font-medium">
                   <ImagePlus size={20} />
-                  <span className="text-sm font-medium">Fotoğraf / Video</span>
+                  <span>Fotoğraf / Video Ekle</span>
                   <input
                     type="file"
+                    multiple
                     accept="image/*,video/*"
                     className="hidden"
                     onChange={handleMediaSelect}
@@ -773,8 +871,8 @@ export default function Feed({
 
               <button
                 type="submit"
-                disabled={(!newPostCaption.trim() && !newPostMedia) || isSubmitting}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-full shadow-md transition-colors cursor-pointer flex items-center gap-2"
+                disabled={(!newPostCaption.trim() && selectedMediaList.length === 0) || isSubmitting}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium rounded-full shadow-md transition-colors cursor-pointer flex items-center gap-2 text-sm font-bold"
               >
                 {isSubmitting ? (
                   <>
@@ -788,6 +886,17 @@ export default function Feed({
             </div>
           </form>
         </div>
+
+        {/* Course Files / PDF & Document Repository for Active Subject */}
+        {activeSubject && (
+          <CourseFilesManager
+            courseId={activeSubject}
+            courseTitle={activeSubject}
+            socket={socket}
+            currentUserId={currentUserId}
+            currentUsername={currentUsername || 'Kullanıcı'}
+          />
+        )}
 
         {/* Gallery View (When user selects Galeri mode inside folder) */}
         {activeSubject && folderViewMode === "gallery" ? (

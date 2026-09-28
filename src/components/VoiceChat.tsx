@@ -453,6 +453,8 @@ export default function VoiceChat({
           isDeafened={isDeafened}
           isSpeakingLocal={isSpeakingLocal}
           mediaPermissionError={mediaPermissionError}
+          socket={socket}
+          roomId={currentRoom.id}
           onToggleMute={toggleMute}
           onToggleVideo={toggleVideo}
           onToggleScreenShare={toggleScreenShare}

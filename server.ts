@@ -80,7 +80,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ 
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100 MB limit for videos and files
+  limits: { fileSize: 250 * 1024 * 1024 } // 250 MB limit for videos, photos and files
 });
 
 // Helper to safely delete uploaded media from disk and Turso cloud database
@@ -245,12 +245,30 @@ async function initDb() {
   // Migrations for existing tables
   try { await client.execute("ALTER TABLE messages ADD COLUMN file_name TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE messages ADD COLUMN file_size TEXT"); } catch(e){}
+  try { await client.execute("ALTER TABLE messages ADD COLUMN status TEXT DEFAULT 'sent'"); } catch(e){}
+  try { await client.execute("ALTER TABLE messages ADD COLUMN is_read INTEGER DEFAULT 0"); } catch(e){}
+  try { await client.execute("ALTER TABLE messages ADD COLUMN read_at TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE group_messages ADD COLUMN file_name TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE group_messages ADD COLUMN file_size TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE global_messages ADD COLUMN file_name TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE global_messages ADD COLUMN file_size TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE posts ADD COLUMN media_type TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE posts ADD COLUMN subject TEXT"); } catch(e){}
+  try { await client.execute("ALTER TABLE posts ADD COLUMN attachments TEXT"); } catch(e){}
+  try {
+    await client.execute(`CREATE TABLE IF NOT EXISTS subject_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      folder_id TEXT,
+      course_id TEXT,
+      filename TEXT,
+      original_name TEXT,
+      mimetype TEXT,
+      size INTEGER,
+      url TEXT,
+      uploaded_by INTEGER,
+      created_at TEXT
+    )`);
+  } catch(e) {}
   try { await client.execute("ALTER TABLE users ADD COLUMN uno_wins INTEGER DEFAULT 0"); } catch(e){}
   try { await client.execute("ALTER TABLE users ADD COLUMN signup_ip TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE users ADD COLUMN last_ip TEXT"); } catch(e){}
@@ -502,8 +520,8 @@ async function startServer() {
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Hardware-Fingerprint", "X-Device-Id"]
   }));
 
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+  app.use(express.json({ limit: "250mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "250mb" }));
 
   // Global Gateway Ban Interceptor (Physical Hardware / Fingerprint Ban ONLY - NEVER CHECKS IP)
   app.use((req, res, next) => {
@@ -936,6 +954,175 @@ async function startServer() {
     });
   });
 
+  // Multiple Media Upload Endpoint (Supports up to 50 files / photos / videos)
+  app.post("/api/upload-multiple", upload.array("files", 50), async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || !Array.isArray(files) || files.length === 0) {
+        return res.status(400).json({ error: "Yüklenecek dosya bulunamadı." });
+      }
+
+      const uploadedResults = await Promise.all(
+        files.map(async (file) => {
+          const filename = file.filename;
+          const originalName = file.originalname;
+          const mimetype = file.mimetype;
+          const size = file.size;
+          const filePath = file.path;
+          const url = `/uploads/${filename}`;
+
+          try {
+            if (size <= 25 * 1024 * 1024) {
+              const base64 = fs.readFileSync(filePath).toString("base64");
+              await client.execute({
+                sql: "INSERT OR REPLACE INTO uploaded_files (filename, original_name, mimetype, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                args: [filename, originalName, mimetype, size, base64, new Date().toISOString()]
+              });
+            }
+          } catch (err) {
+            console.error("Cloud file backup error (multi):", err);
+          }
+
+          const isVideo = mimetype.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi)$/i.test(originalName);
+          const isImage = mimetype.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(originalName);
+          const isAudio = mimetype.startsWith("audio/") || /\.(webm|mp3|ogg|wav)$/i.test(originalName);
+
+          return {
+            url,
+            filename,
+            original_name: originalName,
+            mimetype,
+            size,
+            media_type: isVideo ? "video" : isImage ? "image" : isAudio ? "voice" : "file"
+          };
+        })
+      );
+
+      res.json({ files: uploadedResults, count: uploadedResults.length });
+    } catch (err: any) {
+      console.error("upload-multiple error:", err);
+      res.status(500).json({ error: "Çoklu dosya yüklenirken hata oluştu." });
+    }
+  });
+
+  // Course / Subject Files Endpoints (PDF, DOCX, PPTX, XLSX, ZIP, etc.)
+  app.get(["/api/courses/:courseId/files", "/api/subjects/:courseId/files"], async (req, res) => {
+    try {
+      const folderId = req.params.courseId;
+      const fileRes = await client.execute({
+        sql: `SELECT f.*, u.username as uploader_name, u.avatar as uploader_avatar 
+              FROM subject_files f 
+              LEFT JOIN users u ON f.uploaded_by = u.id 
+              WHERE f.folder_id = ? OR f.course_id = ? 
+              ORDER BY f.id DESC`,
+        args: [folderId, folderId]
+      });
+      res.json({ files: fileRes.rows });
+    } catch (err: any) {
+      res.status(500).json({ error: "Ders dosyaları alınırken hata oluştu." });
+    }
+  });
+
+  app.post(["/api/courses/:courseId/files", "/api/subjects/:courseId/files"], upload.single("file"), async (req, res) => {
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      if (!token) return res.status(401).json({ error: "Giriş yapmalısınız." });
+      const userRes = await client.execute({ sql: "SELECT id, username, is_admin FROM users WHERE token = ?", args: [token] });
+      if (userRes.rows.length === 0) return res.status(401).json({ error: "Geçersiz oturum." });
+      const authUser = userRes.rows[0];
+
+      if (!req.file) return res.status(400).json({ error: "Dosya seçilmedi." });
+      const folderId = req.params.courseId;
+      const filename = req.file.filename;
+      const originalName = req.file.originalname;
+      const mimetype = req.file.mimetype;
+      const size = req.file.size;
+      const filePath = req.file.path;
+      const url = `/uploads/${filename}`;
+
+      try {
+        if (size <= 25 * 1024 * 1024) {
+          const base64 = fs.readFileSync(filePath).toString("base64");
+          await client.execute({
+            sql: "INSERT OR REPLACE INTO uploaded_files (filename, original_name, mimetype, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            args: [filename, originalName, mimetype, size, base64, new Date().toISOString()]
+          });
+        }
+      } catch (err) {}
+
+      const insRes = await client.execute({
+        sql: `INSERT INTO subject_files (folder_id, course_id, filename, original_name, mimetype, size, url, uploaded_by, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [folderId, folderId, filename, originalName, mimetype, size, url, authUser.id, new Date().toISOString()]
+      });
+
+      const newFile = {
+        id: Number(insRes.lastInsertRowid),
+        folder_id: folderId,
+        filename,
+        original_name: originalName,
+        mimetype,
+        size,
+        url,
+        uploaded_by: authUser.id,
+        uploader_name: authUser.username,
+        created_at: new Date().toISOString()
+      };
+
+      io.emit("subjects_updated");
+      io.emit("folder_files_updated", { folderId });
+      res.json({ success: true, file: newFile });
+    } catch (err: any) {
+      console.error("Course file upload error:", err);
+      res.status(500).json({ error: "Ders dosyası yüklenemedi." });
+    }
+  });
+
+  app.delete(["/api/courses/files/:fileId", "/api/subjects/files/:fileId"], async (req, res) => {
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      if (!token) return res.status(401).json({ error: "Giriş yapmalısınız." });
+      const userRes = await client.execute({ sql: "SELECT id, username, is_admin FROM users WHERE token = ?", args: [token] });
+      if (userRes.rows.length === 0) return res.status(401).json({ error: "Geçersiz oturum." });
+      const authUser = userRes.rows[0];
+
+      const rawId = req.params.fileId;
+      const numId = Number(rawId);
+      const fileId = !isNaN(numId) ? numId : rawId;
+
+      const fileRes = await client.execute({
+        sql: "SELECT * FROM subject_files WHERE id = ? OR filename = ?",
+        args: [fileId, String(rawId)]
+      });
+
+      if (fileRes.rows.length === 0) {
+        return res.status(404).json({ error: "Dosya bulunamadı." });
+      }
+
+      const fileObj = fileRes.rows[0];
+      const ownerId = Number(fileObj.uploaded_by);
+      const usernameStr = authUser.username ? String(authUser.username).trim().toLowerCase() : "";
+      const isEmirgan = usernameStr === "emirgan" || authUser.is_admin === 1 || (authUser as any).role === "admin";
+
+      if (ownerId && ownerId !== Number(authUser.id) && !isEmirgan) {
+        return res.status(403).json({ error: "Bu dosyayı silme yetkiniz bulunmamaktadır." });
+      }
+
+      const filePath = (fileObj.url || fileObj.filename) as string;
+      if (filePath) {
+        await deleteUploadedFile(filePath).catch(() => {});
+      }
+
+      await client.execute({ sql: "DELETE FROM subject_files WHERE id = ?", args: [fileObj.id] });
+      io.emit("subjects_updated");
+      io.emit("folder_files_updated", { folderId: fileObj.folder_id });
+      res.json({ success: true, id: fileObj.id });
+    } catch (err: any) {
+      console.error("Course file delete error:", err);
+      res.status(500).json({ error: "Ders dosyası silinirken hata oluştu." });
+    }
+  });
+
   // REST Message Pagination Route (beforeId, limit)
   app.get(["/api/messages/:roomId", "/api/chat/messages/:roomId"], async (req, res) => {
     try {
@@ -1213,10 +1400,21 @@ async function startServer() {
         return res.status(403).json({ error: "Yetkisiz işlem: Sadece kendi gönderilerinizi veya yönetici silebilir." });
       }
 
-      // 1. Delete physical photo from disk and database
+      // 1. Delete physical photo and multi-attachments from disk and database
       const postImage = (post.image || (post as any).image_url) as string | null;
       if (postImage) {
-        await deleteUploadedFile(postImage);
+        await deleteUploadedFile(postImage).catch(() => {});
+      }
+      if ((post as any).attachments) {
+        try {
+          const atts = typeof (post as any).attachments === 'string' ? JSON.parse((post as any).attachments) : (post as any).attachments;
+          if (Array.isArray(atts)) {
+            for (const item of atts) {
+              const url = typeof item === 'string' ? item : item?.url;
+              if (url) await deleteUploadedFile(url).catch(() => {});
+            }
+          }
+        } catch (e) {}
       }
 
       // 2. Delete from database (posts, likes, comments)
@@ -1231,6 +1429,61 @@ async function startServer() {
     } catch (err: any) {
       console.error("DELETE /api/posts/:id error:", err);
       res.status(500).json({ error: err.message || "Gönderi silinirken hata oluştu." });
+    }
+  });
+
+  // REST API: Delete file (Universal File Delete endpoint)
+  app.delete(["/api/files/:id", "/api/subjects/files/:id"], async (req, res) => {
+    try {
+      const token = req.headers.authorization?.replace("Bearer ", "");
+      if (!token) return res.status(401).json({ error: "Giriş yapmalısınız." });
+      const userRes = await client.execute({ sql: "SELECT id, username, is_admin FROM users WHERE token = ?", args: [token] });
+      if (userRes.rows.length === 0) return res.status(401).json({ error: "Geçersiz oturum." });
+      const authUser = userRes.rows[0];
+
+      const rawId = req.params.id;
+      const numId = Number(rawId);
+      const fileId = !isNaN(numId) ? numId : rawId;
+
+      const usernameStr = authUser.username ? String(authUser.username).trim().toLowerCase() : "";
+      const isEmirgan = usernameStr === "emirgan" || authUser.is_admin === 1 || (authUser as any).role === "admin";
+
+      let fileRes = await client.execute({
+        sql: "SELECT * FROM uploaded_files WHERE id = ? OR filename = ?",
+        args: [fileId, String(rawId)]
+      });
+
+      if (fileRes.rows.length === 0) {
+        fileRes = await client.execute({
+          sql: "SELECT * FROM subject_files WHERE id = ?",
+          args: [fileId]
+        });
+      }
+
+      if (fileRes.rows.length === 0) {
+        return res.status(404).json({ error: "Dosya bulunamadı." });
+      }
+
+      const fileObj = fileRes.rows[0];
+      const ownerId = Number(fileObj.user_id || fileObj.uploaded_by || fileObj.sender_id);
+      if (ownerId && ownerId !== Number(authUser.id) && !isEmirgan) {
+        return res.status(403).json({ error: "Bu içeriği silme yetkiniz bulunmamaktadır." });
+      }
+
+      const filePath = (fileObj.path || fileObj.url || fileObj.filename) as string;
+      if (filePath) {
+        await deleteUploadedFile(filePath).catch(() => {});
+      }
+
+      await client.execute({ sql: "DELETE FROM uploaded_files WHERE id = ? OR filename = ?", args: [fileId, String(rawId)] }).catch(() => {});
+      await client.execute({ sql: "DELETE FROM subject_files WHERE id = ?", args: [fileId] }).catch(() => {});
+
+      io.emit("file:deleted", { id: fileId });
+      io.emit("subjects_updated");
+      return res.json({ success: true, id: fileId });
+    } catch (err: any) {
+      console.error("DELETE /api/files/:id error:", err);
+      return res.status(500).json({ error: "Dosya silinirken hata oluştu." });
     }
   });
 
@@ -1546,6 +1799,7 @@ async function startServer() {
 
   // Socket Online Tracking with Reconnection Grace Period (Graceful disconnect for mobile networks)
   const onlineUsers = new Map<number, string>();
+  const activeChatMap = new Map<number, number>(); // userId -> activePartnerId (for smart notification suppression & instant read)
   const disconnectTimers = new Map<number, NodeJS.Timeout>();
   const globalRead = new Map<number, number>();
   const chatRead = new Map<string | number, Map<number, number>>();
@@ -4522,10 +4776,96 @@ async function startServer() {
       cb(Array.from(globalRead.entries()));
     });
 
-    socket.on("mark_chat_read", (chatId, messageId) => {
+    socket.on("mark_chat_read", async (chatId, messageId) => {
       if(!chatRead.has(chatId)) chatRead.set(chatId, new Map());
       chatRead.get(chatId)!.set(Number(user.id), messageId);
       io.emit("chat_read_update", chatId, Array.from(chatRead.get(chatId)!.entries()));
+
+      if (typeof chatId === "string" && chatId.startsWith("dm_")) {
+        const parts = chatId.split("_");
+        if (parts.length === 3) {
+          const u1 = Number(parts[1]);
+          const u2 = Number(parts[2]);
+          const partnerId = u1 === Number(user.id) ? u2 : u1;
+          if (partnerId) {
+            const nowIso = new Date().toISOString();
+            client.execute({
+              sql: "UPDATE messages SET status = 'read', is_read = 1, read_at = ? WHERE sender = ? AND receiver = ? AND (is_read = 0 OR status != 'read')",
+              args: [nowIso, partnerId, user.id]
+            }).catch(() => {});
+            
+            const partnerSocket = onlineUsers.get(partnerId);
+            if (partnerSocket) {
+              io.to(partnerSocket).emit("dm:messages_read", { chatId, readerId: user.id, readAt: nowIso });
+              io.to(partnerSocket).emit("dm:mark_read", { chatId, readerId: user.id, readAt: nowIso });
+            }
+          }
+        }
+      }
+    });
+
+    socket.on("dm:enter_chat", async (data: any) => {
+      const partnerId = Number(data?.partnerId || data?.friendId || (typeof data === 'number' ? data : 0));
+      if (!partnerId) return;
+      activeChatMap.set(user.id, partnerId);
+      
+      const nowIso = new Date().toISOString();
+      const roomKey = `dm_${Math.min(user.id, partnerId)}_${Math.max(user.id, partnerId)}`;
+
+      try {
+        await client.execute({
+          sql: "UPDATE messages SET status = 'read', is_read = 1, read_at = ? WHERE sender = ? AND receiver = ? AND (is_read = 0 OR status != 'read')",
+          args: [nowIso, partnerId, user.id]
+        });
+        await client.execute({
+          sql: "UPDATE notifications SET read = 1 WHERE user_id = ? AND sender_id = ? AND (type = 'new_message' OR type = 'dm')",
+          args: [user.id, partnerId]
+        });
+      } catch (e) {}
+
+      const cached = messageRamCache.get(roomKey);
+      if (cached && Array.isArray(cached)) {
+        cached.forEach(m => {
+          if (m.sender === partnerId && m.receiver === user.id) {
+            m.status = 'read';
+            m.is_read = 1;
+            m.read_at = nowIso;
+          }
+        });
+      }
+
+      const partnerSocket = onlineUsers.get(partnerId);
+      if (partnerSocket) {
+        io.to(partnerSocket).emit("dm:messages_read", { chatId: roomKey, readerId: user.id, readAt: nowIso });
+        io.to(partnerSocket).emit("dm:mark_read", { chatId: roomKey, readerId: user.id, readAt: nowIso });
+        io.to(partnerSocket).emit("chat_read_update", roomKey, [[user.id, Date.now()]]);
+      }
+    });
+
+    socket.on("dm:leave_chat", () => {
+      if (activeChatMap.get(user.id)) {
+        activeChatMap.delete(user.id);
+      }
+    });
+
+    socket.on("dm:mark_read", async (data: any) => {
+      const partnerId = Number(data?.partnerId || data?.readerId || (typeof data === 'number' ? data : 0));
+      if (!partnerId) return;
+      const nowIso = new Date().toISOString();
+      const roomKey = `dm_${Math.min(user.id, partnerId)}_${Math.max(user.id, partnerId)}`;
+
+      try {
+        await client.execute({
+          sql: "UPDATE messages SET status = 'read', is_read = 1, read_at = ? WHERE sender = ? AND receiver = ? AND (is_read = 0 OR status != 'read')",
+          args: [nowIso, partnerId, user.id]
+        });
+      } catch (e) {}
+
+      const partnerSocket = onlineUsers.get(partnerId);
+      if (partnerSocket) {
+        io.to(partnerSocket).emit("dm:messages_read", { chatId: roomKey, readerId: user.id, readAt: nowIso });
+        io.to(partnerSocket).emit("dm:mark_read", { chatId: roomKey, readerId: user.id, readAt: nowIso });
+      }
     });
 
     socket.on("get_chat_read", (chatId, cb) => {
@@ -5130,6 +5470,10 @@ async function startServer() {
 
     const addNotification = async (userId: number, type: string, content: string, senderId?: number, targetId?: number) => {
       if (userId === user.id) return;
+      // Smart Notification Suppression: If receiver is actively in DM with sender, suppress notification!
+      if ((type === "new_message" || type === "dm") && senderId && activeChatMap.get(userId) === senderId) {
+        return;
+      }
       const res = await client.execute({
         sql: "INSERT INTO notifications (user_id, type, content, read, sender_id, target_id, created_at) VALUES (?, ?, ?, 0, ?, ?, ?)",
         args: [userId, type, content, senderId || null, targetId || null, new Date().toISOString()]
@@ -5961,12 +6305,12 @@ async function startServer() {
         let msgRes;
         if (beforeId && !isNaN(beforeId)) {
           msgRes = await client.execute({
-            sql: "SELECT id, sender, receiver, type, content, reply_to, reactions, file_name, file_size, created_at FROM messages WHERE ((sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)) AND id < ? ORDER BY id DESC LIMIT ?",
+            sql: "SELECT id, sender, receiver, type, content, reply_to, reactions, file_name, file_size, status, is_read, read_at, created_at FROM messages WHERE ((sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?)) AND id < ? ORDER BY id DESC LIMIT ?",
             args: [user.id, friendId, friendId, user.id, beforeId, limit]
           });
         } else {
           msgRes = await client.execute({
-            sql: "SELECT id, sender, receiver, type, content, reply_to, reactions, file_name, file_size, created_at FROM messages WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?) ORDER BY id DESC LIMIT ?",
+            sql: "SELECT id, sender, receiver, type, content, reply_to, reactions, file_name, file_size, status, is_read, read_at, created_at FROM messages WHERE (sender = ? AND receiver = ?) OR (sender = ? AND receiver = ?) ORDER BY id DESC LIMIT ?",
             args: [user.id, friendId, friendId, user.id, limit]
           });
         }
@@ -5983,6 +6327,8 @@ async function startServer() {
           }
           return { 
             ...r, 
+            status: r.status || (r.is_read ? 'read' : 'delivered'),
+            is_read: r.is_read || 0,
             reactions: JSON.parse(r.reactions as string || "[]"),
             reply_message: replyMsg,
             file_name: r.file_name,
@@ -6010,9 +6356,17 @@ async function startServer() {
       }
       
       const sUser = await getUser(user.id);
-      const roomKey = `dm_${Math.min(user.id, receiver)}_${Math.max(user.id, receiver)}`;
+      const receiverIdNum = Number(receiver);
+      const roomKey = `dm_${Math.min(user.id, receiverIdNum)}_${Math.max(user.id, receiverIdNum)}`;
       const nowIso = new Date().toISOString();
       const tempMsgId = `m_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+      // Check if receiver is in active chat with user (Smart Notification & WhatsApp-style Read status)
+      const isReceiverInActiveChat = activeChatMap.get(receiverIdNum) === Number(user.id);
+      const isReceiverOnline = !!onlineUsers.get(receiverIdNum);
+      const initialStatus = isReceiverInActiveChat ? 'read' : (isReceiverOnline ? 'delivered' : 'sent');
+      const isReadVal = isReceiverInActiveChat ? 1 : 0;
+      const readAtVal = isReceiverInActiveChat ? nowIso : null;
 
       let replyMsg = null;
       if (reply_to) {
@@ -6034,7 +6388,7 @@ async function startServer() {
       const newMsg: any = {
         id: tempMsgId,
         sender: user.id,
-        receiver,
+        receiver: receiverIdNum,
         type,
         content,
         reply_to: reply_to || null,
@@ -6046,33 +6400,39 @@ async function startServer() {
         file_name: file_name || null,
         file_size: file_size || null,
         created_at: nowIso,
-        room_id: roomKey
+        room_id: roomKey,
+        status: initialStatus,
+        is_read: isReadVal,
+        read_at: readAtVal
       };
 
       // 1. Instant RAM Cache write (zero delay)
       messageRamCache.push(roomKey, newMsg);
 
       // 2. Real-time delivery to peer & local echo
-      const targetSocket = onlineUsers.get(receiver);
+      const targetSocket = onlineUsers.get(receiverIdNum);
       if (targetSocket) io.to(targetSocket).emit("new_message", newMsg);
       socket.emit("new_message", newMsg);
 
       // 3. Asynchronously persist to Turso DB & send notification (background non-blocking)
       client.execute({
-        sql: "INSERT INTO messages (sender, receiver, type, content, reply_to, reactions, file_name, file_size, room_id, created_at) VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)",
-        args: [user.id, receiver, type, content, reply_to || null, file_name || null, file_size || null, roomKey, nowIso]
+        sql: "INSERT INTO messages (sender, receiver, type, content, reply_to, reactions, file_name, file_size, room_id, status, is_read, read_at, created_at) VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, ?, ?)",
+        args: [user.id, receiverIdNum, type, content, reply_to || null, file_name || null, file_size || null, roomKey, initialStatus, isReadVal, readAtVal, nowIso]
       }).then(res => {
         newMsg.id = Number(res.lastInsertRowid);
       }).catch(err => {
         console.error("Async DM persist error:", err);
       });
 
-      let notifPreview = content;
-      if (type === "image") notifPreview = "📷 Fotoğraf";
-      else if (type === "voice") notifPreview = "🎤 Ses kaydı";
-      else if (type === "file") notifPreview = `📎 ${file_name || "Dosya"}`;
-      else if (typeof notifPreview === "string" && notifPreview.length > 80) notifPreview = notifPreview.slice(0, 80) + "...";
-      addNotification(receiver, "new_message", `${user.username}: ${notifPreview}`, user.id).catch(() => {});
+      // 4. Suppress notification if receiver is already actively inside this DM chat
+      if (!isReceiverInActiveChat) {
+        let notifPreview = content;
+        if (type === "image") notifPreview = "📷 Fotoğraf";
+        else if (type === "voice") notifPreview = "🎤 Ses kaydı";
+        else if (type === "file") notifPreview = `📎 ${file_name || "Dosya"}`;
+        else if (typeof notifPreview === "string" && notifPreview.length > 80) notifPreview = notifPreview.slice(0, 80) + "...";
+        addNotification(receiverIdNum, "new_message", `${user.username}: ${notifPreview}`, user.id).catch(() => {});
+      }
     });
 
     const populateMessage = async (m: any, type: "global" | "group") => {
@@ -7753,6 +8113,49 @@ async function startServer() {
           isScreenSharing: p.isScreenSharing
         });
         broadcastVoiceRoom(targetRoomId);
+      }
+    });
+
+    socket.on("voice:invite_user", (data: { targetUserId: number; roomId: string; roomName: string; inviter?: any }, cb?: any) => {
+      const { targetUserId, roomId, roomName } = data || {};
+      if (!targetUserId || !roomId) {
+        if (cb) cb({ success: false, message: "Eksik parametre." });
+        return;
+      }
+      const targetSocket = onlineUsers.get(Number(targetUserId));
+      if (targetSocket) {
+        io.to(targetSocket).emit("voice:invite_user", {
+          roomId,
+          roomName: roomName || "Sesli Sohbet Odası",
+          inviter: {
+            id: user.id,
+            username: user.username,
+            avatar: user.avatar,
+            color: user.color
+          }
+        });
+        if (cb) cb({ success: true });
+      } else {
+        if (cb) cb({ success: false, message: "Kullanıcı çevrimdışı." });
+      }
+    });
+
+    socket.on("voice:invite_response", (data: { accepted: boolean; roomId: string; inviterId: number }) => {
+      const { accepted, roomId, inviterId } = data || {};
+      if (inviterId) {
+        const inviterSocket = onlineUsers.get(Number(inviterId));
+        if (inviterSocket) {
+          io.to(inviterSocket).emit("voice:invite_response", {
+            accepted,
+            roomId,
+            responder: {
+              id: user.id,
+              username: user.username,
+              avatar: user.avatar,
+              color: user.color
+            }
+          });
+        }
       }
     });
 

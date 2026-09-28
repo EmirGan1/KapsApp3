@@ -17,6 +17,7 @@ export interface Post {
   color?: string;
   image: string | null;
   media_type?: 'image' | 'video' | 'file';
+  attachments?: any[] | string;
   caption: string;
   subject?: string;
   created_at: string;

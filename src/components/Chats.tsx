@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Socket } from "socket.io-client";
 import { Friend, Message, MediaModalData } from "../types";
-import { Send, Image as ImageIcon, Mic, Users, Plus, X, Reply, Smile, FileText, Download, Paperclip, Maximize2, Trash2, Loader2, Phone, PhoneCall } from "lucide-react";
+import { Send, Image as ImageIcon, Mic, Users, Plus, X, Reply, Smile, FileText, Download, Paperclip, Maximize2, Trash2, Loader2, Phone, PhoneCall, Check, CheckCheck } from "lucide-react";
 import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
 import { getApiUrl, getAuthHeaders } from "../utils/api";
@@ -317,6 +317,15 @@ export default function Chats({
         setReadReceipts(Object.fromEntries(data));
       }
     };
+
+    const handleDmMessagesRead = (data: any) => {
+      if (activeTab === "friends" && activeChat) {
+        const pId = (activeChat as Friend).id;
+        if (data?.readerId === pId || data?.partnerId === pId || data?.chatId === roomId) {
+          setMessages(prev => prev.map(m => m.sender === currentUserId ? { ...m, status: 'read', is_read: 1 } : m));
+        }
+      }
+    };
     
     socket.on(activeTab === "friends" ? "new_message" : "new_group_message", handleNewMsg);
     socket.on("message_reacted", onReacted);
@@ -325,7 +334,18 @@ export default function Chats({
     socket.on("user_typing", onTyping);
     socket.on("user_stop_typing", onStopTyping);
     socket.on("chat_read_update", handleReadUpdate);
+    socket.on("dm:messages_read", handleDmMessagesRead);
+    socket.on("dm:mark_read", handleDmMessagesRead);
+
+    // Enter DM chat Presence tracking
+    if (activeTab === "friends" && activeChat) {
+      socket.emit("dm:enter_chat", { partnerId: activeChat.id });
+    }
+
     return () => { 
+      if (activeTab === "friends") {
+        socket.emit("dm:leave_chat");
+      }
       socket.off(activeTab === "friends" ? "new_message" : "new_group_message", handleNewMsg); 
       socket.off("message_reacted", onReacted);
       socket.off("message_deleted", onMessageDeleted);
@@ -333,6 +353,8 @@ export default function Chats({
       socket.off("user_typing", onTyping);
       socket.off("user_stop_typing", onStopTyping);
       socket.off("chat_read_update", handleReadUpdate);
+      socket.off("dm:messages_read", handleDmMessagesRead);
+      socket.off("dm:mark_read", handleDmMessagesRead);
 
       // Clean up all typing timeouts
       typingTimersRef.current.forEach(t => clearTimeout(t));
@@ -1013,8 +1035,37 @@ export default function Chats({
                           )}
                         </div>
 
-                        <div className={`text-[10px] mt-1 text-right ${isMine ? 'text-green-700/60' : 'text-slate-400'}`}>
-                          {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <div className={`text-[10px] mt-1 flex items-center justify-end gap-1 ${isMine ? 'text-green-800/80 dark:text-green-200/80' : 'text-slate-400 dark:text-slate-500'}`}>
+                          <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          {isMine && activeTab === "friends" && (() => {
+                            const partnerId = (activeChat as Friend)?.id;
+                            const isRead = 
+                              msg.status === 'read' || 
+                              msg.is_read === 1 || 
+                              !!msg.read_at || 
+                              (partnerId && readReceipts[partnerId] && (typeof msg.id === 'number' && readReceipts[partnerId] >= msg.id));
+                            const isDelivered = msg.status === 'delivered' || isRead || onlineUsers.includes(partnerId);
+
+                            if (isRead) {
+                              return (
+                                <span className="inline-flex items-center text-blue-500 dark:text-blue-400 font-bold ml-0.5" title="Görüldü (Okundu)">
+                                  <CheckCheck size={14} className="stroke-[2.5]" />
+                                </span>
+                              );
+                            }
+                            if (isDelivered) {
+                              return (
+                                <span className="inline-flex items-center text-slate-400 dark:text-slate-400 ml-0.5" title="İletildi">
+                                  <CheckCheck size={14} className="stroke-[2]" />
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="inline-flex items-center text-slate-400 dark:text-slate-400 ml-0.5" title="Gönderildi">
+                                <Check size={14} className="stroke-[2]" />
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
