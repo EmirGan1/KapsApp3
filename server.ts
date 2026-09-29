@@ -73,33 +73,21 @@ const storage = multer.diskStorage({
     cb(null, uploadsDir);
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
+    let ext = path.extname(file.originalname);
+    if (!ext) {
+      if (file.mimetype.startsWith('video/')) ext = '.mp4';
+      else if (file.mimetype.startsWith('image/')) ext = '.jpg';
+      else if (file.mimetype.startsWith('audio/')) ext = '.mp3';
+      else if (file.mimetype === 'application/pdf') ext = '.pdf';
+      else ext = '.bin';
+    }
     const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
     cb(null, uniqueSuffix + ext);
   },
 });
 const upload = multer({ 
   storage,
-  limits: { fileSize: 300 * 1024 * 1024 }, // 300MB limit for videos, high-res photos and documents
-  fileFilter: (req, file, cb) => {
-    // video/mp4, video/quicktime, video/webm, image/*, audio/*, pdf, documents, zip
-    if (
-      file.mimetype.startsWith('image/') || 
-      file.mimetype.startsWith('video/') ||
-      file.mimetype.startsWith('audio/') ||
-      file.mimetype === 'application/pdf' ||
-      file.mimetype.includes('officedocument') ||
-      file.mimetype.includes('word') ||
-      file.mimetype.includes('presentation') ||
-      file.mimetype.includes('spreadsheet') ||
-      file.mimetype.includes('zip') ||
-      /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|mov|mkv|avi|mp3|ogg|wav|pdf|docx?|pptx?|xlsx?|zip)$/i.test(file.originalname)
-    ) {
-      cb(null, true);
-    } else {
-      cb(null, false);
-    }
-  }
+  limits: { fileSize: 300 * 1024 * 1024 } // 300MB limit for videos, high-res photos and documents
 });
 
 // Helper to safely delete uploaded media from disk and Turso cloud database
@@ -1006,92 +994,109 @@ async function startServer() {
     }
   });
 
-  app.post("/api/upload", upload.single("file"), async (req, res) => {
-    if (!req.file) return res.status(400).json({ error: "Dosya bulunamadı." });
-
-    const filename = req.file.filename;
-    const originalName = req.file.originalname;
-    const mimetype = req.file.mimetype;
-    const size = req.file.size;
-    const filePath = req.file.path;
-    const url = `/uploads/${filename}`;
-
-    // Persistent backup to Turso cloud database (so Render container restarts don't wipe files)
-    try {
-      if (size <= 25 * 1024 * 1024) {
-        const base64 = fs.readFileSync(filePath).toString("base64");
-        await client.execute({
-          sql: "INSERT OR REPLACE INTO uploaded_files (filename, original_name, mimetype, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-          args: [filename, originalName, mimetype, size, base64, new Date().toISOString()]
-        });
+  app.post("/api/upload", (req, res) => {
+    upload.single("file")(req, res, async (err: any) => {
+      if (err) {
+        console.error("Upload single error:", err);
+        return res.status(400).json({ error: err.message || "Dosya yüklenirken hata oluştu." });
       }
-    } catch (err) {
-      console.error("Cloud file backup error:", err);
-    }
+      if (!req.file) return res.status(400).json({ error: "Dosya bulunamadı veya yüklenemedi." });
 
-    const isVideo = mimetype.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi)$/i.test(originalName);
-    const isImage = mimetype.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(originalName);
-    const isAudio = mimetype.startsWith("audio/") || /\.(webm|mp3|ogg|wav)$/i.test(originalName);
+      try {
+        const filename = req.file.filename;
+        const originalName = req.file.originalname;
+        const mimetype = req.file.mimetype;
+        const size = req.file.size;
+        const filePath = req.file.path;
+        const url = `/uploads/${filename}`;
 
-    res.json({
-      url,
-      filename,
-      original_name: originalName,
-      mimetype,
-      size,
-      media_type: isVideo ? "video" : isImage ? "image" : isAudio ? "voice" : "file"
+        // Persistent backup to Turso cloud database (so Render container restarts don't wipe files)
+        if (size <= 25 * 1024 * 1024) {
+          try {
+            const base64 = fs.readFileSync(filePath).toString("base64");
+            await client.execute({
+              sql: "INSERT OR REPLACE INTO uploaded_files (filename, original_name, mimetype, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+              args: [filename, originalName, mimetype, size, base64, new Date().toISOString()]
+            });
+          } catch (err) {
+            console.error("Cloud file backup error:", err);
+          }
+        }
+
+        const isVideo = mimetype.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi|m4v|3gp)$/i.test(originalName) || /\.(mp4|webm|mov|mkv|avi|m4v|3gp)$/i.test(filename);
+        const isImage = mimetype.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg|heic|heif)$/i.test(originalName);
+        const isAudio = mimetype.startsWith("audio/") || /\.(webm|mp3|ogg|wav|m4a)$/i.test(originalName);
+
+        res.json({
+          url,
+          filename,
+          original_name: originalName,
+          mimetype,
+          size,
+          media_type: isVideo ? "video" : isImage ? "image" : isAudio ? "voice" : "file"
+        });
+      } catch (e: any) {
+        console.error("Upload processing error:", e);
+        res.status(500).json({ error: "Dosya işlenirken hata oluştu: " + e.message });
+      }
     });
   });
 
   // Multiple Media Upload Endpoint (Supports up to 50 files / photos / videos)
-  app.post("/api/upload-multiple", upload.array("files", 50), async (req, res) => {
-    try {
-      const files = req.files as Express.Multer.File[];
-      if (!files || !Array.isArray(files) || files.length === 0) {
-        return res.status(400).json({ error: "Yüklenecek dosya bulunamadı." });
+  app.post("/api/upload-multiple", (req, res) => {
+    upload.array("files", 50)(req, res, async (err: any) => {
+      if (err) {
+        console.error("Upload multiple error:", err);
+        return res.status(400).json({ error: err.message || "Dosyalar yüklenirken hata oluştu." });
       }
+      try {
+        const files = req.files as Express.Multer.File[];
+        if (!files || !Array.isArray(files) || files.length === 0) {
+          return res.status(400).json({ error: "Yüklenecek dosya bulunamadı." });
+        }
 
-      const uploadedResults = await Promise.all(
-        files.map(async (file) => {
-          const filename = file.filename;
-          const originalName = file.originalname;
-          const mimetype = file.mimetype;
-          const size = file.size;
-          const filePath = file.path;
-          const url = `/uploads/${filename}`;
+        const uploadedResults = await Promise.all(
+          files.map(async (file) => {
+            const filename = file.filename;
+            const originalName = file.originalname;
+            const mimetype = file.mimetype;
+            const size = file.size;
+            const filePath = file.path;
+            const url = `/uploads/${filename}`;
 
-          try {
             if (size <= 25 * 1024 * 1024) {
-              const base64 = fs.readFileSync(filePath).toString("base64");
-              await client.execute({
-                sql: "INSERT OR REPLACE INTO uploaded_files (filename, original_name, mimetype, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                args: [filename, originalName, mimetype, size, base64, new Date().toISOString()]
-              });
+              try {
+                const base64 = fs.readFileSync(filePath).toString("base64");
+                await client.execute({
+                  sql: "INSERT OR REPLACE INTO uploaded_files (filename, original_name, mimetype, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  args: [filename, originalName, mimetype, size, base64, new Date().toISOString()]
+                });
+              } catch (err) {
+                console.error("Cloud file backup error (multi):", err);
+              }
             }
-          } catch (err) {
-            console.error("Cloud file backup error (multi):", err);
-          }
 
-          const isVideo = mimetype.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi)$/i.test(originalName);
-          const isImage = mimetype.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(originalName);
-          const isAudio = mimetype.startsWith("audio/") || /\.(webm|mp3|ogg|wav)$/i.test(originalName);
+            const isVideo = mimetype.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi|m4v|3gp)$/i.test(originalName) || /\.(mp4|webm|mov|mkv|avi|m4v|3gp)$/i.test(filename);
+            const isImage = mimetype.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg|heic|heif)$/i.test(originalName);
+            const isAudio = mimetype.startsWith("audio/") || /\.(webm|mp3|ogg|wav|m4a)$/i.test(originalName);
 
-          return {
-            url,
-            filename,
-            original_name: originalName,
-            mimetype,
-            size,
-            media_type: isVideo ? "video" : isImage ? "image" : isAudio ? "voice" : "file"
-          };
-        })
-      );
+            return {
+              url,
+              filename,
+              original_name: originalName,
+              mimetype,
+              size,
+              media_type: isVideo ? "video" : isImage ? "image" : isAudio ? "voice" : "file"
+            };
+          })
+        );
 
-      res.json({ files: uploadedResults, count: uploadedResults.length });
-    } catch (err: any) {
-      console.error("upload-multiple error:", err);
-      res.status(500).json({ error: "Çoklu dosya yüklenirken hata oluştu." });
-    }
+        res.json({ files: uploadedResults, count: uploadedResults.length });
+      } catch (err: any) {
+        console.error("upload-multiple error:", err);
+        res.status(500).json({ error: "Çoklu dosya yüklenirken hata oluştu: " + err.message });
+      }
+    });
   });
 
   // Course / Subject Files Endpoints (PDF, DOCX, PPTX, XLSX, ZIP, etc.)

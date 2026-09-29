@@ -48,6 +48,28 @@ export default function MediaModal({ data, onClose, onUserClick }: MediaModalPro
     setCurrentIndex((prev) => (prev < items.length - 1 ? prev + 1 : 0));
   };
 
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [touchEndX, setTouchEndX] = useState<number | null>(null);
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    setTouchEndX(null);
+    setTouchStartX(e.targetTouches[0].clientX);
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    setTouchEndX(e.targetTouches[0].clientX);
+  };
+
+  const onTouchEnd = () => {
+    if (!touchStartX || !touchEndX || items.length <= 1) return;
+    const distance = touchStartX - touchEndX;
+    if (distance > 45) {
+      handleNextItem();
+    } else if (distance < -45) {
+      handlePrevItem();
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -97,7 +119,12 @@ export default function MediaModal({ data, onClose, onUserClick }: MediaModalPro
       <div className="bg-black md:bg-white dark:md:bg-slate-900 text-slate-800 dark:text-slate-200 w-full h-full md:h-[88vh] md:max-w-5xl md:rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row border border-white/10 md:border-slate-200 dark:md:border-slate-800 transition-colors duration-200">
         
         {/* Media Section (Left/Center) */}
-        <div className="flex-1 bg-black flex items-center justify-center relative overflow-hidden min-h-[45vh] md:min-h-0">
+        <div 
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          className="flex-1 bg-black flex items-center justify-center relative overflow-hidden min-h-[45vh] md:min-h-0 touch-pan-y select-none"
+        >
           {currentItem.type === "video" ? (
             <video
               key={currentItem.url}

@@ -34,7 +34,7 @@ import { compressImage } from "../utils/imageCompressor";
 export interface SelectedMediaItem {
   file: File;
   preview: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'file';
   name: string;
 }
 
@@ -294,14 +294,17 @@ export default function Feed({
         continue;
       }
 
-      if (file.type.startsWith("video/")) {
+      const isVideo = file.type.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi|m4v|3gp|wmv|flv|ts|mts)$/i.test(file.name);
+      const isImage = file.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|svg|heic|heif|bmp|avif)$/i.test(file.name);
+
+      if (isVideo) {
         newItems.push({
           file,
           preview: URL.createObjectURL(file),
           type: "video",
           name: file.name
         });
-      } else {
+      } else if (isImage) {
         try {
           const compressed = await compressImage(file, { maxWidth: 1920, maxHeight: 1080, quality: 0.85 });
           newItems.push({
@@ -318,6 +321,13 @@ export default function Feed({
             name: file.name
           });
         }
+      } else {
+        newItems.push({
+          file,
+          preview: URL.createObjectURL(file),
+          type: "file",
+          name: file.name
+        });
       }
     }
 
