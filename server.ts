@@ -356,6 +356,51 @@ async function initDb() {
   )`);
   try { await client.execute("ALTER TABLE agenda_events ADD COLUMN target_roles TEXT"); } catch(e){}
 
+  // Roles & Custom Role Creator Table with Discord-style hierarchy
+  await client.execute(`CREATE TABLE IF NOT EXISTS roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL,
+    position INTEGER DEFAULT 0,
+    is_custom INTEGER DEFAULT 0,
+    description TEXT,
+    created_at TEXT
+  )`);
+  try { await client.execute("ALTER TABLE roles ADD COLUMN description TEXT"); } catch(e){}
+  try { await client.execute("ALTER TABLE roles ADD COLUMN position INTEGER DEFAULT 0"); } catch(e){}
+  try { await client.execute("ALTER TABLE roles ADD COLUMN is_custom INTEGER DEFAULT 0"); } catch(e){}
+
+  // Seed default IB roles into roles table
+  try {
+    const defaultRolesSeed = [
+      { key: "titc", name: "TITC", color: "#E11D48", position: 100, is_custom: 0, description: "Türkiye Cumhuriyeti İnkılap Tarihi ve Atatürkçülük" },
+      { key: "eng_b_hl", name: "English B HL", color: "#2563EB", position: 90, is_custom: 0, description: "English B Higher Level" },
+      { key: "turkish_sl", name: "Turkish A SL", color: "#F97316", position: 80, is_custom: 0, description: "Turkish A Standard Level" },
+      { key: "turkish_hl", name: "Turkish A HL", color: "#EA580C", position: 79, is_custom: 0, description: "Turkish A Higher Level" },
+      { key: "math_sl", name: "Mathematics SL", color: "#38BDF8", position: 70, is_custom: 0, description: "Mathematics Standard Level" },
+      { key: "math_hl", name: "Mathematics HL", color: "#0284C7", position: 69, is_custom: 0, description: "Mathematics Higher Level" },
+      { key: "physics_sl", name: "Physics SL", color: "#A855F7", position: 60, is_custom: 0, description: "Physics Standard Level" },
+      { key: "physics_hl", name: "Physics HL", color: "#7E22CE", position: 59, is_custom: 0, description: "Physics Higher Level" },
+      { key: "psychology_sl", name: "Psychology SL", color: "#EC4899", position: 50, is_custom: 0, description: "Psychology Standard Level" },
+      { key: "psychology_hl", name: "Psychology HL", color: "#BE185D", position: 49, is_custom: 0, description: "Psychology Higher Level" },
+      { key: "chemistry_sl", name: "Chemistry SL", color: "#14B8A6", position: 45, is_custom: 0, description: "Chemistry Standard Level" },
+      { key: "chemistry_hl", name: "Chemistry HL", color: "#0F766E", position: 44, is_custom: 0, description: "Chemistry Higher Level" },
+      { key: "biology_sl", name: "Biology SL", color: "#22C55E", position: 40, is_custom: 0, description: "Biology Standard Level" },
+      { key: "biology_hl", name: "Biology HL", color: "#15803D", position: 39, is_custom: 0, description: "Biology Higher Level" },
+      { key: "digital_society_sl", name: "Digital Society SL", color: "#06B6D4", position: 30, is_custom: 0, description: "Digital Society Standard Level" },
+      { key: "digital_society_hl", name: "Digital Society HL", color: "#0891B2", position: 29, is_custom: 0, description: "Digital Society Higher Level" }
+    ];
+    for (const r of defaultRolesSeed) {
+      await client.execute({
+        sql: "INSERT OR IGNORE INTO roles (key, name, color, position, is_custom, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        args: [r.key, r.name, r.color, r.position, r.is_custom, r.description, new Date().toISOString()]
+      });
+    }
+  } catch(e) {
+    console.error("Roles seed error:", e);
+  }
+
   // 5651 Sayılı Kanun Traffic & IP Access Logs Table
   await client.execute(`CREATE TABLE IF NOT EXISTS access_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -722,27 +767,25 @@ async function startServer() {
     userCache.delete(Number(id));
   };
 
-  // Helper to safely parse user IB course roles array
+  // Helper to safely parse user IB course roles array (completely flexible)
   const parseRoles = (rolesField: any): string[] => {
-    if (!rolesField) return ["titc", "eng_b_hl"];
+    if (!rolesField) return [];
     if (Array.isArray(rolesField)) {
-      const unique = Array.from(new Set(rolesField.map((r: any) => String(r).trim())));
-      if (!unique.includes("titc")) unique.unshift("titc");
-      if (!unique.includes("eng_b_hl")) unique.push("eng_b_hl");
-      return unique;
+      return Array.from(new Set(rolesField.map((r: any) => String(r).trim()).filter(Boolean)));
     }
     if (typeof rolesField === "string") {
       try {
         const parsed = JSON.parse(rolesField);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const unique = Array.from(new Set(parsed.map((r: any) => String(r).trim())));
-          if (!unique.includes("titc")) unique.unshift("titc");
-          if (!unique.includes("eng_b_hl")) unique.push("eng_b_hl");
-          return unique;
+        if (Array.isArray(parsed)) {
+          return Array.from(new Set(parsed.map((r: any) => String(r).trim()).filter(Boolean)));
         }
       } catch {}
+      const trimmed = rolesField.trim();
+      if (trimmed && trimmed !== "[]" && trimmed !== "null") {
+        return [trimmed];
+      }
     }
-    return ["titc", "eng_b_hl"];
+    return [];
   };
 
   // Helper to parse target roles for announcements and agenda events
@@ -3092,7 +3135,7 @@ async function startServer() {
     }
   });
 
-  // Admin (emirgan): Update user IB course roles
+  // Admin (emirgan): Update user IB course roles (fully flexible)
   app.put(["/api/users/:id/roles", "/api/emirgan/users/:id/roles", "/api/admin/users/:id/roles"], requireEmirganAdmin, async (req, res) => {
     try {
       const rawId = req.params.id || (req.params as any).userId;
@@ -3110,10 +3153,7 @@ async function startServer() {
         return res.status(400).json({ error: "Roller bir dizi (array) olmalıdır." });
       }
 
-      const cleanedRoles = Array.from(new Set(rawRoles.map((r: any) => String(r).trim())));
-      if (!cleanedRoles.includes("titc")) cleanedRoles.unshift("titc");
-      if (!cleanedRoles.includes("eng_b_hl")) cleanedRoles.push("eng_b_hl");
-
+      const cleanedRoles = Array.from(new Set(rawRoles.map((r: any) => String(r).trim()).filter(Boolean)));
       const rolesJson = JSON.stringify(cleanedRoles);
       await client.execute({
         sql: "UPDATE users SET roles = ? WHERE id = ?",
@@ -3135,6 +3175,164 @@ async function startServer() {
     } catch (err: any) {
       console.error("[EMIRGAN ADMIN] Update user roles error:", err);
       return res.status(500).json({ error: "Roller güncellenirken hata oluştu: " + err.message });
+    }
+  });
+
+  // Roles System API: List All Roles (Sorted by Discord-Style Position/Hierarchy DESC)
+  app.get("/api/roles", async (req, res) => {
+    try {
+      const rolesRes = await client.execute("SELECT id, key, name, color, position, is_custom, description FROM roles ORDER BY position DESC, id ASC");
+      const mapped = rolesRes.rows.map((r: any) => ({
+        id: r.key,
+        key: r.key,
+        dbId: r.id,
+        name: r.name,
+        label: r.name,
+        color: r.color,
+        position: Number(r.position) || 0,
+        isCustom: Boolean(r.is_custom),
+        description: r.description || ""
+      }));
+      return res.json({ roles: mapped });
+    } catch (err: any) {
+      console.error("GET /api/roles error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: Create Custom Role
+  app.post("/api/admin/roles", requireEmirganAdmin, async (req, res) => {
+    try {
+      const { name, color, position, description, key: customKey } = req.body;
+      if (!name || !name.trim()) {
+        return res.status(400).json({ error: "Rol adı zorunludur." });
+      }
+
+      const roleName = name.trim();
+      let roleKey = customKey && String(customKey).trim() 
+        ? String(customKey).trim().toLowerCase().replace(/[^a-z0-9_]/g, "_")
+        : roleName.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/_+/g, "_");
+
+      if (!roleKey) {
+        roleKey = `role_${Date.now()}`;
+      }
+
+      // Check unique key
+      const existing = await client.execute({ sql: "SELECT id FROM roles WHERE key = ?", args: [roleKey] });
+      if (existing.rows.length > 0) {
+        roleKey = `${roleKey}_${Math.floor(Math.random() * 1000)}`;
+      }
+
+      const roleColor = color && color.trim() ? color.trim() : "#6366F1";
+      const rolePosition = Number(position) || 50;
+      const roleDesc = description ? String(description).trim() : null;
+
+      const insertRes = await client.execute({
+        sql: "INSERT INTO roles (key, name, color, position, is_custom, description, created_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
+        args: [roleKey, roleName, roleColor, rolePosition, roleDesc, new Date().toISOString()]
+      });
+
+      const newRole = {
+        id: roleKey,
+        key: roleKey,
+        dbId: Number(insertRes.lastInsertRowid),
+        name: roleName,
+        label: roleName,
+        color: roleColor,
+        position: rolePosition,
+        isCustom: true,
+        description: roleDesc || ""
+      };
+
+      io.emit("roles:updated");
+
+      return res.status(201).json({ success: true, role: newRole });
+    } catch (err: any) {
+      console.error("POST /api/admin/roles error:", err);
+      return res.status(500).json({ error: "Rol oluşturulamadı: " + err.message });
+    }
+  });
+
+  // Admin: Update Role Positions / Hierarchy
+  app.put("/api/admin/roles/order", requireEmirganAdmin, async (req, res) => {
+    try {
+      const { roles } = req.body;
+      if (!Array.isArray(roles)) {
+        return res.status(400).json({ error: "Roller listesi gereklidir." });
+      }
+
+      for (const item of roles) {
+        const roleKey = item.key || item.id;
+        const pos = Number(item.position);
+        if (roleKey && !isNaN(pos)) {
+          await client.execute({
+            sql: "UPDATE roles SET position = ? WHERE key = ? OR id = ?",
+            args: [pos, String(roleKey), Number(item.dbId || item.id) || 0]
+          });
+        }
+      }
+
+      io.emit("roles:updated");
+
+      return res.json({ success: true, message: "Rol hiyerarşisi ve sıralaması güncellendi." });
+    } catch (err: any) {
+      console.error("PUT /api/admin/roles/order error:", err);
+      return res.status(500).json({ error: "Sıralama güncellenirken hata oluştu." });
+    }
+  });
+
+  // Admin: Update a Role
+  app.put("/api/admin/roles/:id", requireEmirganAdmin, async (req, res) => {
+    try {
+      const roleIdOrKey = req.params.id;
+      const { name, color, position, description } = req.body;
+
+      await client.execute({
+        sql: "UPDATE roles SET name = COALESCE(?, name), color = COALESCE(?, color), position = COALESCE(?, position), description = COALESCE(?, description) WHERE id = ? OR key = ?",
+        args: [
+          name ? String(name).trim() : null,
+          color ? String(color).trim() : null,
+          position !== undefined ? Number(position) : null,
+          description !== undefined ? String(description).trim() : null,
+          Number(roleIdOrKey) || 0,
+          String(roleIdOrKey)
+        ]
+      });
+
+      io.emit("roles:updated");
+
+      return res.json({ success: true, message: "Rol güncellendi." });
+    } catch (err: any) {
+      console.error("PUT /api/admin/roles/:id error:", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin: Delete a Custom Role
+  app.delete("/api/admin/roles/:id", requireEmirganAdmin, async (req, res) => {
+    try {
+      const roleIdOrKey = req.params.id;
+      const existing = await client.execute({
+        sql: "SELECT id, key, is_custom FROM roles WHERE id = ? OR key = ?",
+        args: [Number(roleIdOrKey) || 0, String(roleIdOrKey)]
+      });
+
+      if (existing.rows.length === 0) {
+        return res.status(404).json({ error: "Rol bulunamadı." });
+      }
+
+      const roleRow = existing.rows[0];
+      await client.execute({
+        sql: "DELETE FROM roles WHERE id = ?",
+        args: [roleRow.id]
+      });
+
+      io.emit("roles:updated");
+
+      return res.json({ success: true, message: "Rol silindi." });
+    } catch (err: any) {
+      console.error("DELETE /api/admin/roles/:id error:", err);
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -6586,6 +6784,28 @@ async function startServer() {
       } catch (err: any) {
         console.error("ban_user error:", err);
         if (cb) cb({ error: "Kullanıcı banlanırken bir hata oluştu." });
+      }
+    });
+
+    // Roles System Socket Handlers
+    socket.on("get_roles", async (cb?: (res: any) => void) => {
+      try {
+        const rolesRes = await client.execute("SELECT id, key, name, color, position, is_custom, description FROM roles ORDER BY position DESC, id ASC");
+        const mapped = rolesRes.rows.map((r: any) => ({
+          id: r.key,
+          key: r.key,
+          dbId: r.id,
+          name: r.name,
+          label: r.name,
+          color: r.color,
+          position: Number(r.position) || 0,
+          isCustom: Boolean(r.is_custom),
+          description: r.description || ""
+        }));
+        if (cb) cb({ roles: mapped });
+      } catch (err: any) {
+        console.error("get_roles socket error:", err);
+        if (cb) cb({ error: "Roller alınamadı." });
       }
     });
 

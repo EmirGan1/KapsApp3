@@ -1,9 +1,10 @@
-import React from "react";
-import { COURSE_ROLES, CourseRole } from "../types";
+import React, { useState, useEffect } from "react";
+import { COURSE_ROLES, CourseRole, sortRolesByPosition } from "../types";
 import { ShieldCheck, Plus, Sparkles, Tag } from "lucide-react";
 
 interface RoleBadgesProps {
   roles?: string[] | null;
+  allRoles?: CourseRole[];
   showEditButton?: boolean;
   onEditClick?: () => void;
   size?: "sm" | "md" | "lg";
@@ -13,19 +14,18 @@ interface RoleBadgesProps {
 
 export default function RoleBadges({
   roles,
+  allRoles = COURSE_ROLES,
   showEditButton = false,
   onEditClick,
   size = "md",
   className = "",
   emptyText = "Henüz rol atanmadı"
 }: RoleBadgesProps) {
-  // Normalize roles: if empty or undefined, fallback to default roles (titc & eng_b_hl)
-  const roleIds = Array.isArray(roles) && roles.length > 0 
-    ? roles 
-    : ["titc", "eng_b_hl"];
+  // If roles is explicitly provided as array (including empty array []), respect it.
+  const roleIds = Array.isArray(roles) ? roles : [];
 
-  // Map to CourseRole objects in canonical order
-  const activeRoles: CourseRole[] = COURSE_ROLES.filter((r) => roleIds.includes(r.id));
+  // Sort active roles by position descending (Discord-style hierarchy)
+  const activeRoles: CourseRole[] = sortRolesByPosition(roleIds, allRoles);
 
   const sizeStyles = {
     sm: {
@@ -55,7 +55,7 @@ export default function RoleBadges({
             borderColor: `${role.color}4D`,     // 30% opacity
           }}
           className={`inline-flex items-center rounded-lg border transition-all duration-150 select-none shadow-2xs hover:scale-105 ${sizeStyles.pill}`}
-          title={`${role.label} IB Dersi Rolü`}
+          title={role.description || `${role.label} Rolü (Pozisyon: ${role.position || 0})`}
         >
           {/* Discord-style Glowing Role Circle Dot */}
           <span
@@ -65,9 +65,9 @@ export default function RoleBadges({
             }}
             className={`${sizeStyles.dot} rounded-full shrink-0`}
           />
-          {/* Readable English Course Label */}
+          {/* Readable Course / Custom Role Label */}
           <span className={`text-slate-900 dark:text-slate-100 tracking-tight leading-none ${sizeStyles.text}`}>
-            {role.label}
+            {role.label || role.name || role.id}
           </span>
         </div>
       ))}

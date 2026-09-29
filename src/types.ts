@@ -1,27 +1,34 @@
 export interface CourseRole {
   id: string;
+  key?: string;
   label: string;
+  name?: string;
   color: string;
+  position?: number;
   isDefault?: boolean;
+  isCustom?: boolean;
+  description?: string;
   subjectGroup?: string;
   level?: "SL" | "HL";
 }
 
 export const COURSE_ROLES: CourseRole[] = [
-  { id: "titc", label: "TITC", color: "#E11D48", isDefault: true },
-  { id: "eng_b_hl", label: "English B HL", color: "#2563EB", isDefault: true, subjectGroup: "english", level: "HL" },
-  { id: "turkish_sl", label: "Turkish A SL", color: "#F97316", subjectGroup: "turkish", level: "SL" },
-  { id: "turkish_hl", label: "Turkish A HL", color: "#EA580C", subjectGroup: "turkish", level: "HL" },
-  { id: "math_sl", label: "Mathematics SL", color: "#38BDF8", subjectGroup: "math", level: "SL" },
-  { id: "math_hl", label: "Mathematics HL", color: "#0284C7", subjectGroup: "math", level: "HL" },
-  { id: "physics_sl", label: "Physics SL", color: "#A855F7", subjectGroup: "physics", level: "SL" },
-  { id: "physics_hl", label: "Physics HL", color: "#7E22CE", subjectGroup: "physics", level: "HL" },
-  { id: "psychology_sl", label: "Psychology SL", color: "#EC4899", subjectGroup: "psychology", level: "SL" },
-  { id: "psychology_hl", label: "Psychology HL", color: "#BE185D", subjectGroup: "psychology", level: "HL" },
-  { id: "chemistry_sl", label: "Chemistry SL", color: "#14B8A6", subjectGroup: "chemistry", level: "SL" },
-  { id: "chemistry_hl", label: "Chemistry HL", color: "#0F766E", subjectGroup: "chemistry", level: "HL" },
-  { id: "biology_sl", label: "Biology SL", color: "#22C55E", subjectGroup: "biology", level: "SL" },
-  { id: "biology_hl", label: "Biology HL", color: "#15803D", subjectGroup: "biology", level: "HL" },
+  { id: "titc", label: "TITC", color: "#E11D48", isDefault: true, position: 100 },
+  { id: "eng_b_hl", label: "English B HL", color: "#2563EB", isDefault: true, subjectGroup: "english", level: "HL", position: 90 },
+  { id: "turkish_sl", label: "Turkish A SL", color: "#F97316", subjectGroup: "turkish", level: "SL", position: 80 },
+  { id: "turkish_hl", label: "Turkish A HL", color: "#EA580C", subjectGroup: "turkish", level: "HL", position: 79 },
+  { id: "math_sl", label: "Mathematics SL", color: "#38BDF8", subjectGroup: "math", level: "SL", position: 70 },
+  { id: "math_hl", label: "Mathematics HL", color: "#0284C7", subjectGroup: "math", level: "HL", position: 69 },
+  { id: "physics_sl", label: "Physics SL", color: "#A855F7", subjectGroup: "physics", level: "SL", position: 60 },
+  { id: "physics_hl", label: "Physics HL", color: "#7E22CE", subjectGroup: "physics", level: "HL", position: 59 },
+  { id: "psychology_sl", label: "Psychology SL", color: "#EC4899", subjectGroup: "psychology", level: "SL", position: 50 },
+  { id: "psychology_hl", label: "Psychology HL", color: "#BE185D", subjectGroup: "psychology", level: "HL", position: 49 },
+  { id: "chemistry_sl", label: "Chemistry SL", color: "#14B8A6", subjectGroup: "chemistry", level: "SL", position: 45 },
+  { id: "chemistry_hl", label: "Chemistry HL", color: "#0F766E", subjectGroup: "chemistry", level: "HL", position: 44 },
+  { id: "biology_sl", label: "Biology SL", color: "#22C55E", subjectGroup: "biology", level: "SL", position: 40 },
+  { id: "biology_hl", label: "Biology HL", color: "#15803D", subjectGroup: "biology", level: "HL", position: 39 },
+  { id: "digital_society_sl", label: "Digital Society SL", color: "#06B6D4", subjectGroup: "digital_society", level: "SL", position: 30 },
+  { id: "digital_society_hl", label: "Digital Society HL", color: "#0891B2", subjectGroup: "digital_society", level: "HL", position: 29 },
 ];
 
 export interface User {
@@ -320,4 +327,38 @@ export const isVisibleToUser = (
   // Check if at least one target role matches the user's roles
   const normalizedUserRoles = (userRoles || []).map((r) => r.toLowerCase().trim());
   return targetRoles.some((tr) => normalizedUserRoles.includes(tr.toLowerCase().trim()));
+};
+
+export const sortRolesByPosition = (
+  roleIds: string[] | null | undefined,
+  allRoles: CourseRole[] = COURSE_ROLES
+): CourseRole[] => {
+  if (!Array.isArray(roleIds) || roleIds.length === 0) return [];
+  const rolesMap = new Map<string, CourseRole>();
+  allRoles.forEach((r) => {
+    rolesMap.set(r.id.toLowerCase(), r);
+    if (r.key) rolesMap.set(r.key.toLowerCase(), r);
+  });
+
+  const matched: CourseRole[] = [];
+  roleIds.forEach((id) => {
+    const rawId = String(id).toLowerCase().trim();
+    if (!rawId) return;
+    const r = rolesMap.get(rawId);
+    if (r) {
+      if (!matched.some((m) => m.id === r.id)) {
+        matched.push(r);
+      }
+    } else {
+      matched.push({
+        id: rawId,
+        label: String(id),
+        color: "#6366F1",
+        position: 0,
+        isCustom: true
+      });
+    }
+  });
+
+  return matched.sort((a, b) => (b.position || 0) - (a.position || 0));
 };

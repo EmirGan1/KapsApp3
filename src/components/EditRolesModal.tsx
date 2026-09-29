@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
-import { X, Check, Shield, Sparkles, Tag, AlertCircle, RefreshCw, Layers } from "lucide-react";
-import { COURSE_ROLES, CourseRole } from "../types";
+import React, { useState, useEffect, useMemo } from "react";
+import { X, Check, Shield, Sparkles, Tag, AlertCircle, RefreshCw, Layers, Trash2, Award } from "lucide-react";
+import { COURSE_ROLES, CourseRole, sortRolesByPosition } from "../types";
 import { getApiUrl, getAuthHeaders } from "../utils/api";
 import { Socket } from "socket.io-client";
 
@@ -23,22 +23,61 @@ export default function EditRolesModal({
   socket,
   onRolesUpdated
 }: EditRolesModalProps) {
+  const [availableRoles, setAvailableRoles] = useState<CourseRole[]>(COURSE_ROLES);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
+  // Fetch all roles (including custom roles & order from backend)
+  const loadRoles = () => {
+    fetch(getApiUrl("/api/roles"))
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && Array.isArray(data.roles) && data.roles.length > 0) {
+          // Merge with static metadata like subjectGroup and level
+          const merged: CourseRole[] = data.roles.map((r: any) => {
+            const staticMatch = COURSE_ROLES.find(
+              (cr) => cr.id.toLowerCase() === r.key.toLowerCase() || cr.id.toLowerCase() === r.id.toLowerCase()
+            );
+            return {
+              id: r.key || r.id,
+              key: r.key || r.id,
+              label: r.name || r.label,
+              name: r.name || r.label,
+              color: r.color,
+              position: Number(r.position) || 0,
+              isCustom: Boolean(r.isCustom),
+              description: r.description || staticMatch?.description,
+              subjectGroup: staticMatch?.subjectGroup || (r.isCustom ? "custom" : undefined),
+              level: staticMatch?.level
+            };
+          });
+          setAvailableRoles(merged.sort((a, b) => (b.position || 0) - (a.position || 0)));
+        }
+      })
+      .catch(() => {
+        setAvailableRoles(COURSE_ROLES);
+      });
+  };
+
   useEffect(() => {
     if (isOpen) {
-      // Ensure defaults (titc, eng_b_hl) if empty
-      const initial = Array.isArray(currentRoles) && currentRoles.length > 0
-        ? currentRoles
-        : ["titc", "eng_b_hl"];
-      setSelectedRoles(Array.from(new Set(initial)));
+      loadRoles();
+      setSelectedRoles(Array.isArray(currentRoles) ? Array.from(new Set(currentRoles)) : []);
       setErrorMessage("");
       setSuccessMessage("");
     }
   }, [isOpen, currentRoles]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onRolesChanged = () => loadRoles();
+    socket.on("roles:updated", onRolesChanged);
+    return () => {
+      socket.off("roles:updated", onRolesChanged);
+    };
+  }, [socket]);
 
   if (!isOpen) return null;
 
@@ -54,7 +93,7 @@ export default function EditRolesModal({
         // Selecting: If this role belongs to a subject group with SL/HL level, remove the conflicting level
         let next = [...prev];
         if (role.subjectGroup && role.level) {
-          const conflictingRole = COURSE_ROLES.find(
+          const conflictingRole = availableRoles.find(
             (r) => r.subjectGroup === role.subjectGroup && r.id !== role.id
           );
           if (conflictingRole) {
@@ -68,10 +107,21 @@ export default function EditRolesModal({
   };
 
   const handleSelectDefaults = () => {
-    setSelectedRoles((prev) => {
-      const merged = Array.from(new Set([...prev, "titc", "eng_b_hl"]));
-      return merged;
-    });
+    setSelectedRoles(["titc", "eng_b_hl"]);
+  };
+
+  const handleSelectAllSL = () => {
+    const slIds = availableRoles.filter((r) => r.level === "SL" || r.id === "titc").map((r) => r.id);
+    setSelectedRoles(Array.from(new Set(slIds)));
+  };
+
+  const handleSelectAllHL = () => {
+    const hlIds = availableRoles.filter((r) => r.level === "HL" || r.id === "titc").map((r) => r.id);
+    setSelectedRoles(Array.from(new Set(hlIds)));
+  };
+
+  const handleClearAll = () => {
+    setSelectedRoles([]);
   };
 
   const handleSave = async () => {
@@ -79,10 +129,8 @@ export default function EditRolesModal({
     setErrorMessage("");
     setSuccessMessage("");
 
-    // Make sure at least the mandatory default roles are preserved
+    // Fully flexible: save exactly what is selected without forced additions
     const rolesToSave = Array.from(new Set([...selectedRoles]));
-    if (!rolesToSave.includes("titc")) rolesToSave.unshift("titc");
-    if (!rolesToSave.includes("eng_b_hl")) rolesToSave.push("eng_b_hl");
 
     try {
       // 1. REST API update
@@ -112,7 +160,7 @@ export default function EditRolesModal({
       setSuccessMessage("Roller başarıyla kaydedildi!");
       setTimeout(() => {
         onClose();
-      }, 700);
+      }, 600);
     } catch (err: any) {
       console.error("Save roles error:", err);
       setErrorMessage(err.message || "Roller kaydedilemedi.");
@@ -121,16 +169,26 @@ export default function EditRolesModal({
     }
   };
 
-  // Group roles by subject for clean UI categorization
-  const defaultRoles = COURSE_ROLES.filter((r) => r.isDefault);
+  // Categorize standard IB subject groups and custom roles
+  const coreRoles = availableRoles.filter((r) => r.id === "titc" || r.id === "eng_b_hl");
   const subjectGroups = [
-    { title: "Turkish A", roles: COURSE_ROLES.filter((r) => r.subjectGroup === "turkish") },
-    { title: "Mathematics", roles: COURSE_ROLES.filter((r) => r.subjectGroup === "math") },
-    { title: "Physics", roles: COURSE_ROLES.filter((r) => r.subjectGroup === "physics") },
-    { title: "Psychology", roles: COURSE_ROLES.filter((r) => r.subjectGroup === "psychology") },
-    { title: "Chemistry", roles: COURSE_ROLES.filter((r) => r.subjectGroup === "chemistry") },
-    { title: "Biology", roles: COURSE_ROLES.filter((r) => r.subjectGroup === "biology") }
-  ];
+    { title: "English B", roles: availableRoles.filter((r) => r.subjectGroup === "english" && r.id !== "eng_b_hl") },
+    { title: "Turkish A", roles: availableRoles.filter((r) => r.subjectGroup === "turkish") },
+    { title: "Mathematics", roles: availableRoles.filter((r) => r.subjectGroup === "math") },
+    { title: "Physics", roles: availableRoles.filter((r) => r.subjectGroup === "physics") },
+    { title: "Digital Society", roles: availableRoles.filter((r) => r.subjectGroup === "digital_society" || r.id.startsWith("digital_society")) },
+    { title: "Psychology", roles: availableRoles.filter((r) => r.subjectGroup === "psychology") },
+    { title: "Chemistry", roles: availableRoles.filter((r) => r.subjectGroup === "chemistry") },
+    { title: "Biology", roles: availableRoles.filter((r) => r.subjectGroup === "biology") }
+  ].filter((g) => g.roles.length > 0);
+
+  // Custom Created Roles
+  const customRoles = availableRoles.filter((r) => r.isCustom || (!r.subjectGroup && r.id !== "titc" && r.id !== "eng_b_hl"));
+
+  // Sorted active roles for Discord preview
+  const sortedActiveRoles = useMemo(() => {
+    return sortRolesByPosition(selectedRoles, availableRoles);
+  }, [selectedRoles, availableRoles]);
 
   return (
     <div
@@ -148,10 +206,10 @@ export default function EditRolesModal({
             </div>
             <div>
               <h3 className="font-black text-base sm:text-lg text-white flex items-center gap-2">
-                IB Ders Rolleri Yönetimi
+                Kullanıcı Rolleri Yönetimi
               </h3>
               <p className="text-xs text-slate-400">
-                <span className="text-indigo-400 font-semibold">@{username}</span> kullanıcısının ders rozetleri
+                <span className="text-indigo-400 font-semibold">@{username}</span> kullanıcısının ders ve özel rozetleri
               </p>
             </div>
           </div>
@@ -183,25 +241,35 @@ export default function EditRolesModal({
 
           {/* Discord Live Preview Section */}
           <div className="p-3.5 bg-slate-950 border border-slate-800/80 rounded-2xl">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-2">
+            <div className="flex flex-wrap items-center justify-between gap-1 text-xs font-semibold text-slate-400 mb-2">
               <span className="flex items-center gap-1.5">
                 <Sparkles size={13} className="text-indigo-400" />
                 Discord Profil Önizlemesi ({selectedRoles.length} Rol)
               </span>
-              <button
-                type="button"
-                onClick={handleSelectDefaults}
-                className="text-[11px] text-blue-400 hover:underline cursor-pointer"
-              >
-                Varsayılanları Geri Yükle
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectDefaults}
+                  className="text-[11px] text-blue-400 hover:underline cursor-pointer"
+                >
+                  Varsayılanları Seç
+                </button>
+                <span className="text-slate-600">|</span>
+                <button
+                  type="button"
+                  onClick={handleClearAll}
+                  className="text-[11px] text-rose-400 hover:underline cursor-pointer"
+                >
+                  Tümünü Temizle
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 min-h-[34px] p-2 bg-slate-900/90 rounded-xl border border-slate-800">
-              {selectedRoles.length === 0 ? (
-                <span className="text-xs text-slate-500 italic">Hiçbir rol seçilmedi</span>
+              {sortedActiveRoles.length === 0 ? (
+                <span className="text-xs text-slate-500 italic">Hiçbir rol seçilmedi (0 Rol)</span>
               ) : (
-                COURSE_ROLES.filter((r) => selectedRoles.includes(r.id)).map((role) => (
+                sortedActiveRoles.map((role) => (
                   <div
                     key={role.id}
                     style={{
@@ -209,6 +277,7 @@ export default function EditRolesModal({
                       borderColor: `${role.color}4D`
                     }}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold shadow-xs"
+                    title={`Hiyerarşi Sırası: ${role.position || 0}`}
                   >
                     <span
                       style={{
@@ -217,62 +286,140 @@ export default function EditRolesModal({
                       }}
                       className="w-2 h-2 rounded-full shrink-0"
                     />
-                    <span className="text-slate-100">{role.label}</span>
+                    <span className="text-slate-100">{role.label || role.name}</span>
                   </div>
                 ))
               )}
             </div>
           </div>
 
-          {/* 1. Mandatory Default Roles */}
-          <div>
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
-              <Layers size={13} className="text-rose-400" />
-              <span>Zorunlu Varsayılan Roller (Tüm Öğrenciler)</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {defaultRoles.map((role) => {
-                const isSelected = selectedRoles.includes(role.id);
-                return (
-                  <button
-                    key={role.id}
-                    type="button"
-                    onClick={() => handleToggleRole(role)}
-                    style={{
-                      borderColor: isSelected ? role.color : undefined,
-                      backgroundColor: isSelected ? `${role.color}15` : undefined
-                    }}
-                    className={`flex items-center justify-between p-3 rounded-2xl border transition-all text-left cursor-pointer ${
-                      isSelected
-                        ? "border-2 shadow-md shadow-slate-950"
-                        : "border-slate-800 bg-slate-950/40 hover:border-slate-700 hover:bg-slate-800/40"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span
-                        style={{ backgroundColor: role.color }}
-                        className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs"
-                      />
-                      <div>
-                        <p className="font-bold text-sm text-white">{role.label}</p>
-                        <p className="text-[10px] text-slate-400">Zorunlu / Varsayılan</p>
-                      </div>
-                    </div>
-                    <div
-                      style={{ backgroundColor: isSelected ? role.color : undefined }}
-                      className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 ${
-                        isSelected ? "border-transparent text-white" : "border-slate-700 text-transparent"
-                      }`}
-                    >
-                      <Check size={12} strokeWidth={3} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+          {/* Quick Shortcuts */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-[11px] font-semibold text-slate-400 mr-1">Hızlı Seçim:</span>
+            <button
+              type="button"
+              onClick={handleSelectAllSL}
+              className="px-2.5 py-1 rounded-lg bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/30 text-[11px] font-semibold transition-colors cursor-pointer"
+            >
+              Tüm SL Dersleri
+            </button>
+            <button
+              type="button"
+              onClick={handleSelectAllHL}
+              className="px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 text-[11px] font-semibold transition-colors cursor-pointer"
+            >
+              Tüm HL Dersleri
+            </button>
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-[11px] font-semibold transition-colors cursor-pointer ml-auto"
+            >
+              Temizle
+            </button>
           </div>
 
-          {/* 2. Elective IB Subject Groups with SL / HL Smart Switch */}
+          {/* 1. Core IB Roles (TITC & English B HL) - Now fully toggleable */}
+          {coreRoles.length > 0 && (
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                <Layers size={13} className="text-rose-400" />
+                <span>Temel IB Dersleri (İsteğe Bağlı Kaldırılabilir)</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {coreRoles.map((role) => {
+                  const isSelected = selectedRoles.includes(role.id);
+                  return (
+                    <button
+                      key={role.id}
+                      type="button"
+                      onClick={() => handleToggleRole(role)}
+                      style={{
+                        borderColor: isSelected ? role.color : undefined,
+                        backgroundColor: isSelected ? `${role.color}18` : undefined
+                      }}
+                      className={`flex items-center justify-between p-3 rounded-2xl border transition-all text-left cursor-pointer ${
+                        isSelected
+                          ? "border-2 shadow-md shadow-slate-950"
+                          : "border-slate-800 bg-slate-950/40 hover:border-slate-700 hover:bg-slate-800/40"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          style={{ backgroundColor: role.color }}
+                          className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs"
+                        />
+                        <div>
+                          <p className="font-bold text-sm text-white">{role.label}</p>
+                          <p className="text-[10px] text-slate-400">Ders Rolü (Sıra: {role.position || 0})</p>
+                        </div>
+                      </div>
+                      <div
+                        style={{ backgroundColor: isSelected ? role.color : undefined }}
+                        className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 ${
+                          isSelected ? "border-transparent text-white" : "border-slate-700 text-transparent"
+                        }`}
+                      >
+                        <Check size={12} strokeWidth={3} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 2. Custom Roles Created by Emirgan */}
+          {customRoles.length > 0 && (
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                <Award size={13} className="text-amber-400" />
+                <span>Özel Oluşturulmuş Roller</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {customRoles.map((role) => {
+                  const isSelected = selectedRoles.includes(role.id);
+                  return (
+                    <button
+                      key={role.id}
+                      type="button"
+                      onClick={() => handleToggleRole(role)}
+                      style={{
+                        borderColor: isSelected ? role.color : undefined,
+                        backgroundColor: isSelected ? `${role.color}18` : undefined
+                      }}
+                      className={`flex items-center justify-between p-3 rounded-2xl border transition-all text-left cursor-pointer ${
+                        isSelected
+                          ? "border-2 shadow-md shadow-slate-950"
+                          : "border-slate-800 bg-slate-950/40 hover:border-slate-700 hover:bg-slate-800/40"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span
+                          style={{ backgroundColor: role.color }}
+                          className="w-3.5 h-3.5 rounded-full shrink-0 shadow-xs"
+                        />
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-white truncate">{role.label || role.name}</p>
+                          <p className="text-[10px] text-amber-400/90 truncate">Özel Rol (Sıra: {role.position || 0})</p>
+                        </div>
+                      </div>
+                      <div
+                        style={{ backgroundColor: isSelected ? role.color : undefined }}
+                        className={`w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 ${
+                          isSelected ? "border-transparent text-white" : "border-slate-700 text-transparent"
+                        }`}
+                      >
+                        <Check size={12} strokeWidth={3} />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 3. Elective IB Subject Groups (SL / HL Smart Switch) */}
           <div className="space-y-3">
             <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center justify-between">
               <span>Seçmeli IB Dersleri (SL / HL Otomatik Geçiş)</span>
@@ -351,7 +498,7 @@ export default function EditRolesModal({
             ) : (
               <>
                 <Check size={16} />
-                <span>Rolleri Kaydet</span>
+                <span>Rolleri Kaydet ({selectedRoles.length})</span>
               </>
             )}
           </button>

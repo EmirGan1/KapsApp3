@@ -5,9 +5,11 @@ import {
   RefreshCw, Megaphone, Search, Clock, 
   Unlock, Crown, AlertTriangle, Eye, UserX,
   Radio, HardDrive, Terminal, X, Check, Edit3, 
-  ShieldAlert, Ban, UserCheck, ShieldCheck, Gamepad2, Tag
+  ShieldAlert, Ban, UserCheck, ShieldCheck, Gamepad2, Tag,
+  Award, Plus, ArrowUp, ArrowDown, Layers, Sparkles, Palette
 } from "lucide-react";
 import { getApiUrl } from "../utils/api";
+import { COURSE_ROLES, CourseRole, sortRolesByPosition } from "../types";
 import RoleBadges from "./RoleBadges";
 import EditRolesModal from "./EditRolesModal";
 
@@ -84,7 +86,7 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({ socket, currentUsername, onUserClick, onPendingCountChange }: AdminPanelProps) {
-  const [activeTab, setActiveTab] = useState<"pending" | "users" | "tables" | "hardware" | "broadcast" | "logs">("pending");
+  const [activeTab, setActiveTab] = useState<"pending" | "users" | "roles" | "tables" | "hardware" | "broadcast" | "logs">("pending");
   const [loading, setLoading] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   
@@ -95,6 +97,20 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
   const [bannedHardware, setBannedHardware] = useState<BannedHardwareItem[]>([]);
   const [logs, setLogs] = useState<AccessLogItem[]>([]);
   const [activeTables, setActiveTables] = useState<any[]>([]);
+  const [rolesList, setRolesList] = useState<CourseRole[]>(COURSE_ROLES);
+  
+  // Role Creator & Manager States
+  const [newRoleName, setNewRoleName] = useState<string>("");
+  const [newRoleKey, setNewRoleKey] = useState<string>("");
+  const [newRoleColor, setNewRoleColor] = useState<string>("#F59E0B");
+  const [newRolePosition, setNewRolePosition] = useState<number>(55);
+  const [newRoleDescription, setNewRoleDescription] = useState<string>("");
+  const [editingRole, setEditingRole] = useState<CourseRole | null>(null);
+  const [editRoleName, setEditRoleName] = useState<string>("");
+  const [editRoleColor, setEditRoleColor] = useState<string>("#6366F1");
+  const [editRolePosition, setEditRolePosition] = useState<number>(0);
+  const [editRoleDescription, setEditRoleDescription] = useState<string>("");
+  const [roleActionLoading, setRoleActionLoading] = useState<boolean>(false);
   
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -223,6 +239,182 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
     }
   }, []);
 
+  const fetchRoles = useCallback(async () => {
+    try {
+      const res = await fetch(getApiUrl("/api/roles"));
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.roles)) {
+          const mapped: CourseRole[] = data.roles.map((r: any) => {
+            const staticMatch = COURSE_ROLES.find(
+              (cr) => cr.id.toLowerCase() === (r.key || r.id).toLowerCase()
+            );
+            return {
+              id: r.key || r.id,
+              key: r.key || r.id,
+              label: r.name || r.label,
+              name: r.name || r.label,
+              color: r.color || "#6366F1",
+              position: Number(r.position) || 0,
+              isCustom: Boolean(r.isCustom),
+              description: r.description || staticMatch?.description,
+              subjectGroup: staticMatch?.subjectGroup || (r.isCustom ? "custom" : undefined),
+              level: staticMatch?.level
+            };
+          });
+          setRolesList(mapped.sort((a, b) => (b.position || 0) - (a.position || 0)));
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching roles:", e);
+    }
+  }, []);
+
+  const handleCreateRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRoleName.trim()) {
+      showToast("Rol adı zorunludur.", "error");
+      return;
+    }
+    const key = newRoleKey.trim() || newRoleName.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+    setRoleActionLoading(true);
+    try {
+      const res = await fetch(getApiUrl("/api/admin/roles"), {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          name: newRoleName.trim(),
+          key,
+          color: newRoleColor,
+          position: Number(newRolePosition) || 50,
+          description: newRoleDescription.trim() || undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`"${newRoleName}" özel rolü başarıyla oluşturuldu!`, "success");
+        setNewRoleName("");
+        setNewRoleKey("");
+        setNewRoleColor("#F59E0B");
+        setNewRolePosition(55);
+        setNewRoleDescription("");
+        fetchRoles();
+        if (socket && socket.connected) {
+          socket.emit("roles:updated");
+        }
+      } else {
+        showToast(data.error || "Rol oluşturulamadı.", "error");
+      }
+    } catch (err: any) {
+      showToast("Hata: " + err.message, "error");
+    } finally {
+      setRoleActionLoading(false);
+    }
+  };
+
+  const handleMoveRole = async (index: number, direction: "up" | "down") => {
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= rolesList.length) return;
+
+    const updated = [...rolesList];
+    const temp = updated[index];
+    updated[index] = updated[targetIndex];
+    updated[targetIndex] = temp;
+
+    // Recalculate descending positions with gap
+    const highestPos = Math.max(...rolesList.map((r) => r.position || 0), 100);
+    const reordered = updated.map((r, i) => ({
+      id: r.id,
+      key: r.key || r.id,
+      position: highestPos - i * 5
+    }));
+
+    setRolesList(updated.map((r, i) => ({ ...r, position: highestPos - i * 5 })));
+
+    try {
+      const res = await fetch(getApiUrl("/api/admin/roles/order"), {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ roles: reordered })
+      });
+      if (res.ok) {
+        showToast("Rol hiyerarşisi ve görünüm sırası güncellendi.", "success");
+        fetchRoles();
+        if (socket && socket.connected) {
+          socket.emit("roles:updated");
+        }
+      } else {
+        showToast("Sıralama güncellenemedi.", "error");
+      }
+    } catch (err: any) {
+      showToast("Hata: " + err.message, "error");
+    }
+  };
+
+  const handleDeleteRole = async (role: CourseRole) => {
+    if (!role.isCustom) {
+      showToast("Standart IB ders rollerini silemezsiniz. Ancak kullanıcı profillerinden dilediğiniz gibi kaldırabilirsiniz.", "error");
+      return;
+    }
+    if (!window.confirm(`"${role.label || role.name}" özel rolünü kalıcı olarak silmek istediğinize emin misiniz?`)) {
+      return;
+    }
+    setRoleActionLoading(true);
+    try {
+      const res = await fetch(getApiUrl(`/api/admin/roles/${role.id}`), {
+        method: "DELETE",
+        headers: getAuthHeaders()
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast("Özel rol başarıyla silindi.", "success");
+        fetchRoles();
+        if (socket && socket.connected) {
+          socket.emit("roles:updated");
+        }
+      } else {
+        showToast(data.error || "Rol silinemedi.", "error");
+      }
+    } catch (err: any) {
+      showToast("Hata: " + err.message, "error");
+    } finally {
+      setRoleActionLoading(false);
+    }
+  };
+
+  const handleSaveEditedRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingRole) return;
+    setRoleActionLoading(true);
+    try {
+      const res = await fetch(getApiUrl(`/api/admin/roles/${editingRole.id}`), {
+        method: "PUT",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          name: editRoleName.trim(),
+          color: editRoleColor,
+          position: Number(editRolePosition) || 0,
+          description: editRoleDescription.trim() || undefined
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showToast("Rol başarıyla güncellendi.", "success");
+        setEditingRole(null);
+        fetchRoles();
+        if (socket && socket.connected) {
+          socket.emit("roles:updated");
+        }
+      } else {
+        showToast(data.error || "Rol güncellenemedi.", "error");
+      }
+    } catch (err: any) {
+      showToast("Hata: " + err.message, "error");
+    } finally {
+      setRoleActionLoading(false);
+    }
+  };
+
   const handleCloseTable = async (tableId: string) => {
     if (!window.confirm(`Masa (${tableId}) kapatılacak ve oyuncular lobiye yönlendirilecek. Onaylıyor musunuz?`)) return;
     setActionLoading(true);
@@ -273,6 +465,7 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
     fetchUsers();
     fetchOverview();
     fetchActiveTables();
+    fetchRoles();
 
     const interval = setInterval(() => {
       fetchPendingUsers();
@@ -280,7 +473,7 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [fetchPendingUsers, fetchUsers, fetchOverview, fetchActiveTables]);
+  }, [fetchPendingUsers, fetchUsers, fetchOverview, fetchActiveTables, fetchRoles]);
 
   useEffect(() => {
     if (!socket) return;
@@ -315,6 +508,7 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
     socket.on("user_unbanned", handlePendingUpdate);
     socket.on("user_deleted", handlePendingUpdate);
     socket.on("user:roles_updated", handleRolesUpdate);
+    socket.on("roles:updated", fetchRoles);
     socket.on("active_tables_updated", handleActiveTablesUpdate);
     socket.on("online_users", () => {
       fetchUsers();
@@ -333,16 +527,18 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
       socket.off("user_unbanned", handlePendingUpdate);
       socket.off("user_deleted", handlePendingUpdate);
       socket.off("user:roles_updated", handleRolesUpdate);
+      socket.off("roles:updated", fetchRoles);
       socket.off("active_tables_updated", handleActiveTablesUpdate);
       socket.off("online_users");
     };
-  }, [socket, fetchPendingUsers, fetchUsers, fetchOverview, fetchActiveTables]);
+  }, [socket, fetchPendingUsers, fetchUsers, fetchOverview, fetchActiveTables, fetchRoles]);
 
   // Tab change handler
-  const handleTabChange = (tab: "pending" | "users" | "tables" | "hardware" | "broadcast" | "logs") => {
+  const handleTabChange = (tab: "pending" | "users" | "roles" | "tables" | "hardware" | "broadcast" | "logs") => {
     setActiveTab(tab);
     if (tab === "pending") fetchPendingUsers();
     if (tab === "users") fetchUsers();
+    if (tab === "roles") fetchRoles();
     if (tab === "tables") fetchActiveTables();
     if (tab === "hardware") fetchBannedHardware();
     if (tab === "logs") { fetchLogs(); fetchOverview(); }
@@ -703,6 +899,18 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
               {users.filter(u => u.isOnline).length} Online
             </span>
           )}
+        </button>
+
+        <button
+          onClick={() => handleTabChange("roles")}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-t-xl text-xs sm:text-sm font-bold transition-all border-b-2 cursor-pointer ${
+            activeTab === "roles"
+              ? "bg-slate-950 text-indigo-400 border-indigo-500 shadow-sm"
+              : "text-slate-400 hover:text-slate-200 border-transparent hover:bg-slate-800/50"
+          }`}
+        >
+          <Award size={16} />
+          <span>🏷️ Rol Yönetimi & Hiyerarşi ({rolesList.length})</span>
         </button>
 
         <button
@@ -1079,6 +1287,372 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB: ROL YÖNETİMİ, ÖZEL ROL OLUŞTURUCU & HİYERARŞİ        */}
+        {/* ========================================================= */}
+        {activeTab === "roles" && (
+          <div className="space-y-6 max-w-5xl mx-auto">
+            {/* Header Banner */}
+            <div className="bg-gradient-to-r from-indigo-500/15 via-purple-500/10 to-transparent border border-indigo-500/30 rounded-2xl p-5 shadow-lg">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-indigo-600 text-white rounded-xl font-black shadow-md shadow-indigo-600/30">
+                    <Award size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                      <span>Discord Tarzı Rol Yönetimi, Özel Roller & Hiyerarşi</span>
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-500 text-white">
+                        {rolesList.length} Toplam Rol
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Ders ve özel rollerin sıralamasını (hiyerarşisini) ayarlayın; profillerde ve bilgi kartlarında en üstte listelensin.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={fetchRoles}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 border border-slate-700 flex items-center gap-2 shrink-0 cursor-pointer"
+                  >
+                    <RefreshCw size={13} className={roleActionLoading ? "animate-spin" : ""} />
+                    <span>Rolleri Yenile</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Role Stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-4 pt-4 border-t border-indigo-500/20 text-xs">
+                <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+                  <p className="text-slate-400 text-[11px]">Standart IB Dersleri</p>
+                  <p className="text-sm font-bold text-white mt-0.5">
+                    {rolesList.filter((r) => !r.isCustom).length} Rol
+                  </p>
+                </div>
+                <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+                  <p className="text-slate-400 text-[11px]">Özel Oluşturulan Roller</p>
+                  <p className="text-sm font-bold text-amber-400 mt-0.5">
+                    {rolesList.filter((r) => r.isCustom).length} Özel Rol
+                  </p>
+                </div>
+                <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+                  <p className="text-slate-400 text-[11px]">Digital Society</p>
+                  <p className="text-sm font-bold text-cyan-400 mt-0.5">SL & HL Aktif</p>
+                </div>
+                <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+                  <p className="text-slate-400 text-[11px]">Zorunlu Rol Durumu</p>
+                  <p className="text-sm font-bold text-emerald-400 mt-0.5">Tam Esnek (%100)</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Main 2-Column Grid: Creator + Hierarchy Table */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Column 1: Custom Role Creator Box (lg:col-span-5) */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
+                  <div className="flex items-center gap-2 mb-3 pb-3 border-b border-slate-800">
+                    <Sparkles size={18} className="text-amber-400" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Yeni Özel Rol Oluştur</h3>
+                      <p className="text-[11px] text-slate-400">Emirgan/Admin özel yetkili rozetleri</p>
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleCreateRole} className="space-y-3.5 text-xs">
+                    {/* Role Name */}
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">
+                        Rol Adı (Title / Label) <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Örn: Öğrenci Temsilcisi, Kulüp Başkanı"
+                        value={newRoleName}
+                        onChange={(e) => {
+                          setNewRoleName(e.target.value);
+                          if (!newRoleKey || newRoleKey === newRoleName.toLowerCase().replace(/[^a-z0-9_]/g, "_")) {
+                            setNewRoleKey(e.target.value.toLowerCase().trim().replace(/[^a-z0-9_]/g, "_"));
+                          }
+                        }}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-medium"
+                        required
+                      />
+                    </div>
+
+                    {/* Role Key / Slug */}
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">
+                        Benzersiz Kod / ID (Key Slug)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Örn: student_rep, club_lead"
+                        value={newRoleKey}
+                        onChange={(e) => setNewRoleKey(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-300 font-mono text-xs focus:outline-none focus:border-indigo-500"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-0.5">Otomatik oluşturulur veya elle düzenleyebilirsiniz.</p>
+                    </div>
+
+                    {/* Color Picker & Presets */}
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 flex items-center justify-between">
+                        <span>Rol Rengi (Color)</span>
+                        <span className="font-mono text-[11px] text-slate-400">{newRoleColor}</span>
+                      </label>
+                      <div className="flex items-center gap-2 mb-2">
+                        <input
+                          type="color"
+                          value={newRoleColor}
+                          onChange={(e) => setNewRoleColor(e.target.value)}
+                          className="w-9 h-9 rounded-xl border border-slate-700 bg-slate-950 cursor-pointer p-0.5 shrink-0"
+                        />
+                        <input
+                          type="text"
+                          value={newRoleColor}
+                          onChange={(e) => setNewRoleColor(e.target.value)}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-slate-200 font-mono text-xs uppercase"
+                        />
+                      </div>
+                      {/* Color Presets */}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {[
+                          "#EF4444", "#F97316", "#F59E0B", "#10B981", "#14B8A6",
+                          "#06B6D4", "#0284C7", "#3B82F6", "#6366F1", "#8B5CF6",
+                          "#EC4899", "#E11D48"
+                        ].map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setNewRoleColor(c)}
+                            style={{ backgroundColor: c }}
+                            className={`w-5 h-5 rounded-lg transition-transform cursor-pointer shrink-0 ${
+                              newRoleColor.toLowerCase() === c.toLowerCase() ? "scale-125 ring-2 ring-white ring-offset-1 ring-offset-slate-900" : "hover:scale-110 opacity-80 hover:opacity-100"
+                            }`}
+                            title={c}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Hierarchy / Position */}
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1 flex items-center justify-between">
+                        <span>Görünüm Sırası / Hiyerarşi (Position)</span>
+                        <span className="text-amber-400 font-bold">Değer: {newRolePosition}</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="200"
+                        value={newRolePosition}
+                        onChange={(e) => setNewRolePosition(Number(e.target.value) || 0)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono"
+                      />
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        Daha yüksek değer (Örn: 95) rolün profilde daha üstte ve ilk sırada görünmesini sağlar.
+                      </p>
+                    </div>
+
+                    {/* Description */}
+                    <div>
+                      <label className="block text-slate-300 font-bold mb-1">
+                        Rol Açıklaması (İsteğe Bağlı)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Örn: 2026 Dönem Öğrenci Temsilciliği Yetkisi"
+                        value={newRoleDescription}
+                        onChange={(e) => setNewRoleDescription(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                      />
+                    </div>
+
+                    {/* Live Preview Box */}
+                    <div className="p-3 bg-slate-950 border border-slate-800/90 rounded-xl space-y-1">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Canlı Önizleme</p>
+                      <div className="flex items-center gap-2">
+                        <div
+                          style={{
+                            backgroundColor: `${newRoleColor}20`,
+                            borderColor: `${newRoleColor}60`
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-semibold shadow-xs"
+                        >
+                          <span
+                            style={{
+                              backgroundColor: newRoleColor,
+                              boxShadow: `0 0 6px ${newRoleColor}99`
+                            }}
+                            className="w-2 h-2 rounded-full shrink-0"
+                          />
+                          <span className="text-slate-100 font-bold">
+                            {newRoleName.trim() || "Rol Adı"}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          (Sıra: {newRolePosition})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Submit Button */}
+                    <button
+                      type="submit"
+                      disabled={roleActionLoading || !newRoleName.trim()}
+                      className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/25 transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                      <Plus size={15} />
+                      <span>{roleActionLoading ? "Kaydediliyor..." : "Özel Rolü Oluştur ve Kaydet"}</span>
+                    </button>
+                  </form>
+                </div>
+              </div>
+
+              {/* Column 2: Hierarchy List & Ordering (lg:col-span-7) */}
+              <div className="lg:col-span-7 space-y-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
+                  <div className="flex items-center justify-between gap-2 mb-3 pb-3 border-b border-slate-800">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <span>Rol Hiyerarşisi & Görünüm Sıralaması</span>
+                      </h3>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Üstteki roller profillerde en önde listelenir. Sıralamayı değiştirmek için okları kullanın.
+                      </p>
+                    </div>
+                    <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-950 text-indigo-400 border border-slate-800">
+                      En Üst ⬆ En Yüksek
+                    </span>
+                  </div>
+
+                  <div className="space-y-2 max-h-[620px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-700">
+                    {rolesList.length === 0 ? (
+                      <div className="p-8 text-center text-slate-500">Kayıtlı rol bulunamadı.</div>
+                    ) : (
+                      rolesList.map((role, index) => {
+                        return (
+                          <div
+                            key={role.id || role.key}
+                            className={`flex items-center justify-between gap-2 p-2.5 sm:p-3 rounded-xl border transition-all ${
+                              role.isCustom
+                                ? "bg-amber-950/20 border-amber-500/30 hover:border-amber-500/50"
+                                : "bg-slate-950/60 border-slate-800/80 hover:border-slate-700"
+                            }`}
+                          >
+                            {/* Left: Rank & Move Buttons */}
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-mono text-xs font-black text-slate-500 w-5 text-center">
+                                #{index + 1}
+                              </span>
+
+                              <div className="flex flex-col gap-0.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleMoveRole(index, "up")}
+                                  disabled={index === 0}
+                                  title="Yukarı Taşı (Hiyerarşiyi Yükselt)"
+                                  className="p-1 rounded bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors cursor-pointer disabled:opacity-20 disabled:pointer-events-none"
+                                >
+                                  <ArrowUp size={11} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleMoveRole(index, "down")}
+                                  disabled={index === rolesList.length - 1}
+                                  title="Aşağı Taşı (Hiyerarşiyi Düşür)"
+                                  className="p-1 rounded bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors cursor-pointer disabled:opacity-20 disabled:pointer-events-none"
+                                >
+                                  <ArrowDown size={11} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Middle: Role Badge & Details */}
+                            <div className="flex-1 min-w-0 px-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <div
+                                  style={{
+                                    backgroundColor: `${role.color}1A`,
+                                    borderColor: `${role.color}4D`
+                                  }}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg border text-xs font-bold"
+                                >
+                                  <span
+                                    style={{ backgroundColor: role.color }}
+                                    className="w-2 h-2 rounded-full shrink-0 shadow-xs"
+                                  />
+                                  <span className="text-white">{role.label || role.name}</span>
+                                </div>
+
+                                {role.isCustom ? (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                    ⭐ Özel Rol
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-800 text-slate-400">
+                                    IB Dersi
+                                  </span>
+                                )}
+
+                                <span className="text-[11px] font-mono text-slate-400">
+                                  Hiyerarşi: <strong className="text-indigo-400">{role.position || 0}</strong>
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
+                                <span className="font-mono text-slate-500">ID: {role.key || role.id}</span>
+                                {role.description && (
+                                  <>
+                                    <span className="text-slate-600">•</span>
+                                    <span className="truncate max-w-[200px]">{role.description}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Right: Actions */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingRole(role);
+                                  setEditRoleName(role.label || role.name || "");
+                                  setEditRoleColor(role.color || "#6366F1");
+                                  setEditRolePosition(role.position || 0);
+                                  setEditRoleDescription(role.description || "");
+                                }}
+                                title="Rolü Düzenle"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                              >
+                                <Edit3 size={13} />
+                              </button>
+
+                              {role.isCustom && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRole(role)}
+                                  title="Özel Rolü Sil"
+                                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 text-rose-400 hover:text-white transition-colors cursor-pointer"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1581,6 +2155,126 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
             showToast(`"${selectedUserForRoles.username}" kullanıcısının rolleri güncellendi.`, "success");
           }}
         />
+      )}
+
+      {/* Modal 5: Rol Düzenleme Modalı (İsim, Renk, Hiyerarşi) */}
+      {editingRole && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div
+                  style={{ backgroundColor: `${editRoleColor}20`, borderColor: `${editRoleColor}60` }}
+                  className="p-2 rounded-xl border text-white font-bold"
+                >
+                  <Edit3 size={18} style={{ color: editRoleColor }} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Rolü Düzenle</h3>
+                  <p className="text-xs text-slate-400 font-mono">ID: {editingRole.key || editingRole.id}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingRole(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedRole} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Rol Adı (Label)</label>
+                <input
+                  type="text"
+                  value={editRoleName}
+                  onChange={(e) => setEditRoleName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-medium"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-bold mb-1 flex items-center justify-between">
+                  <span>Rol Rengi</span>
+                  <span className="font-mono text-slate-400">{editRoleColor}</span>
+                </label>
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="color"
+                    value={editRoleColor}
+                    onChange={(e) => setEditRoleColor(e.target.value)}
+                    className="w-9 h-9 rounded-xl border border-slate-700 bg-slate-950 cursor-pointer p-0.5 shrink-0"
+                  />
+                  <input
+                    type="text"
+                    value={editRoleColor}
+                    onChange={(e) => setEditRoleColor(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-slate-200 font-mono uppercase"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {[
+                    "#EF4444", "#F97316", "#F59E0B", "#10B981", "#14B8A6",
+                    "#06B6D4", "#0284C7", "#3B82F6", "#6366F1", "#8B5CF6",
+                    "#EC4899", "#E11D48"
+                  ].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setEditRoleColor(c)}
+                      style={{ backgroundColor: c }}
+                      className={`w-5 h-5 rounded-lg cursor-pointer shrink-0 ${
+                        editRoleColor.toLowerCase() === c.toLowerCase() ? "scale-125 ring-2 ring-white ring-offset-1 ring-offset-slate-900" : "opacity-80 hover:opacity-100"
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-bold mb-1 flex items-center justify-between">
+                  <span>Hiyerarşi / Sıralama Değeri (Position)</span>
+                  <span className="text-amber-400 font-bold">{editRolePosition}</span>
+                </label>
+                <input
+                  type="number"
+                  value={editRolePosition}
+                  onChange={(e) => setEditRolePosition(Number(e.target.value) || 0)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Açıklama</label>
+                <input
+                  type="text"
+                  value={editRoleDescription}
+                  onChange={(e) => setEditRoleDescription(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingRole(null)}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 rounded-xl cursor-pointer"
+                >
+                  İptal
+                </button>
+                <button
+                  type="submit"
+                  disabled={roleActionLoading || !editRoleName.trim()}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white rounded-xl shadow-lg shadow-indigo-600/30 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {roleActionLoading ? "Kaydediliyor..." : "Değişiklikleri Kaydet"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
