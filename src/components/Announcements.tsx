@@ -1,33 +1,24 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Socket } from "socket.io-client";
 import DOMPurify from "dompurify";
 import { 
   Megaphone, Plus, Trash2, CheckCircle2, Clock, 
   Bold, Italic, Underline, Strikethrough, Heading1, Heading2, 
   Type, AlignLeft, AlignCenter, AlignRight, List, ListOrdered, 
-  Palette, Sparkles, AlertCircle, Eye, RefreshCw, Send, ShieldAlert, X
+  Palette, Sparkles, AlertCircle, Eye, RefreshCw, Send, ShieldAlert, X,
+  Users, Target
 } from "lucide-react";
+import { AnnouncementItem, AnnouncementStyles, isVisibleToUser, parseTargetRoles } from "../types";
+import TargetRoleSelector from "./TargetRoleSelector";
+import TargetRoleBadge from "./TargetRoleBadge";
 
-export interface AnnouncementStyles {
-  color?: string;
-  fontWeight?: "normal" | "medium" | "bold";
-  fontSize?: "sm" | "base" | "lg" | "xl";
-}
-
-export interface AnnouncementItem {
-  id: number;
-  title: string;
-  content: string;
-  styles?: AnnouncementStyles | string;
-  author_id: number;
-  author_username: string;
-  created_at: string;
-}
+export type { AnnouncementStyles, AnnouncementItem };
 
 interface AnnouncementsProps {
   socket: Socket | null;
   username: string;
   currentUserId: number;
+  currentUserRoles?: string[];
   onAnnouncementsRead?: (latestId: number) => void;
 }
 
@@ -46,8 +37,26 @@ export default function Announcements({
   socket,
   username,
   currentUserId,
+  currentUserRoles = [],
   onAnnouncementsRead
 }: AnnouncementsProps) {
+  const isEmirgan = username.trim().toLowerCase() === "emirgan";
+
+  // Effective user roles
+  const effectiveRoles = useMemo(() => {
+    if (Array.isArray(currentUserRoles) && currentUserRoles.length > 0) {
+      return currentUserRoles;
+    }
+    try {
+      const stored = localStorage.getItem("lan_user_roles");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return ["titc", "eng_b_hl"];
+  }, [currentUserRoles]);
+
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -60,11 +69,11 @@ export default function Announcements({
   const [selectedColor, setSelectedColor] = useState("inherit");
   const [selectedWeight, setSelectedWeight] = useState<"normal" | "medium" | "bold">("normal");
   const [selectedSize, setSelectedSize] = useState<"sm" | "base" | "lg" | "xl">("base");
+  const [targetRoles, setTargetRoles] = useState<string[]>([]);
   const [showColorMenu, setShowColorMenu] = useState(false);
   const [formError, setFormError] = useState("");
 
   const editorRef = useRef<HTMLDivElement>(null);
-  const isEmirgan = username.trim().toLowerCase() === "emirgan";
 
   // Load announcements
   const loadAnnouncements = () => {
@@ -180,7 +189,8 @@ export default function Announcements({
     socket.emit("create_announcement", {
       title: title.trim(),
       content: cleanContent,
-      styles: stylesPayload
+      styles: stylesPayload,
+      targetRoles
     }, (res: any) => {
       setIsPublishing(false);
       if (res?.error) {
@@ -194,6 +204,7 @@ export default function Announcements({
         setSelectedColor("inherit");
         setSelectedWeight("normal");
         setSelectedSize("base");
+        setTargetRoles([]);
         setShowEditor(false);
         setPreviewMode(false);
         loadAnnouncements();
@@ -629,6 +640,13 @@ export default function Announcements({
                 )}
               </div>
 
+              {/* Target Course Roles Selector */}
+              <TargetRoleSelector
+                selectedRoles={targetRoles}
+                onChange={setTargetRoles}
+                label="Kimler Görebilir? (Hedef Ders Rolleri)"
+              />
+
               {formError && (
                 <div className="text-xs text-red-600 dark:text-red-400 font-medium bg-red-50 dark:bg-red-950/40 p-2.5 rounded-xl border border-red-200 dark:border-red-900/60 flex items-center gap-2">
                   <AlertCircle size={15} />
@@ -657,102 +675,119 @@ export default function Announcements({
           </div>
         )}
 
-        {/* Announcements List */}
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-3"></div>
-            <p className="text-xs">Duyurular yükleniyor...</p>
-          </div>
-        ) : announcements.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center max-w-sm mx-auto">
-            <div className="w-16 h-16 rounded-3xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mb-4">
-              <Megaphone size={28} />
-            </div>
-            <h3 className="font-bold text-slate-800 dark:text-slate-200 text-base mb-1">
-              Henüz Duyuru Bulunmuyor
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Yöneticiler tarafından paylaşılan duyurular ve sistem güncellemeleri burada listelenecektir.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {announcements.map((ann, idx) => {
-              const formattedDate = new Date(ann.created_at).toLocaleString("tr-TR", {
-                dateStyle: "medium",
-                timeStyle: "short"
-              });
+        {/* Filtered Announcements List based on User IB Course Roles */}
+        {(() => {
+          const visibleAnnouncements = announcements.filter((a) =>
+            isVisibleToUser(a.targetRoles, effectiveRoles, isEmirgan)
+          );
 
-              const parsedStyles: AnnouncementStyles = typeof ann.styles === "string" 
-                ? (() => { try { return JSON.parse(ann.styles as string); } catch(e) { return {}; } })() 
-                : (ann.styles || {});
+          if (isLoading) {
+            return (
+              <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mb-3"></div>
+                <p className="text-xs">Duyurular yükleniyor...</p>
+              </div>
+            );
+          }
 
-              const customColor = parsedStyles.color && parsedStyles.color !== "inherit" ? parsedStyles.color : undefined;
-              const weightClass = parsedStyles.fontWeight === "bold" ? "font-bold" : parsedStyles.fontWeight === "medium" ? "font-medium" : "font-normal";
-              const sizeClass = parsedStyles.fontSize === "xl" ? "text-base sm:text-lg font-semibold" : parsedStyles.fontSize === "lg" ? "text-sm sm:text-base" : parsedStyles.fontSize === "sm" ? "text-xs" : "text-xs sm:text-sm";
+          if (visibleAnnouncements.length === 0) {
+            return (
+              <div className="flex flex-col items-center justify-center py-20 text-center max-w-sm mx-auto">
+                <div className="w-16 h-16 rounded-3xl bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mb-4">
+                  <Megaphone size={28} />
+                </div>
+                <h3 className="font-bold text-slate-800 dark:text-slate-200 text-base mb-1">
+                  Henüz Duyuru Bulunmuyor
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {isEmirgan
+                    ? "Yukarıdaki 'Yeni Duyuru Oluştur' butonuna tıklayarak yeni bir duyuru yayınlayabilirsiniz."
+                    : "Derslerinize veya genel kullanıma uygun yayınlanan bir duyuru bulunmuyor."}
+                </p>
+              </div>
+            );
+          }
 
-              return (
-                <div
-                  key={ann.id}
-                  className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-sm hover:shadow-md transition-all relative overflow-hidden group"
-                >
-                  {/* Top Accent Line for the newest announcement */}
-                  {idx === 0 && (
-                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-500"></div>
-                  )}
+          return (
+            <div className="space-y-4">
+              {visibleAnnouncements.map((ann, idx) => {
+                const formattedDate = new Date(ann.created_at).toLocaleString("tr-TR", {
+                  dateStyle: "medium",
+                  timeStyle: "short"
+                });
 
-                  {/* Card Header */}
-                  <div className="flex items-start justify-between gap-4 mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-sm shrink-0">
-                        {ann.author_username?.[0]?.toUpperCase() || "E"}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900 dark:text-white text-sm">
-                            {ann.author_username}
-                          </span>
-                          <span className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold px-2 py-0.5 rounded-full border border-indigo-500/20 flex items-center gap-1">
-                            <ShieldAlert size={11} /> Yönetici
-                          </span>
+                const parsedStyles: AnnouncementStyles = typeof ann.styles === "string" 
+                  ? (() => { try { return JSON.parse(ann.styles as string); } catch(e) { return {}; } })() 
+                  : (ann.styles || {});
+
+                const customColor = parsedStyles.color && parsedStyles.color !== "inherit" ? parsedStyles.color : undefined;
+                const weightClass = parsedStyles.fontWeight === "bold" ? "font-bold" : parsedStyles.fontWeight === "medium" ? "font-medium" : "font-normal";
+                const sizeClass = parsedStyles.fontSize === "xl" ? "text-base sm:text-lg font-semibold" : parsedStyles.fontSize === "lg" ? "text-sm sm:text-base" : parsedStyles.fontSize === "sm" ? "text-xs" : "text-xs sm:text-sm";
+
+                return (
+                  <div
+                    key={ann.id}
+                    className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-sm hover:shadow-md transition-all relative overflow-hidden group"
+                  >
+                    {/* Top Accent Line for the newest announcement */}
+                    {idx === 0 && (
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-500"></div>
+                    )}
+
+                    {/* Card Header */}
+                    <div className="flex items-start justify-between gap-4 mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-sm shrink-0">
+                          {ann.author_username?.[0]?.toUpperCase() || "E"}
                         </div>
-                        <div className="flex items-center gap-1 text-[11px] text-slate-400 mt-0.5">
-                          <Clock size={12} />
-                          <span>{formattedDate}</span>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-slate-900 dark:text-white text-sm">
+                              {ann.author_username}
+                            </span>
+                            <span className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold px-2 py-0.5 rounded-full border border-indigo-500/20 flex items-center gap-1">
+                              <ShieldAlert size={11} /> Yönetici
+                            </span>
+                            <TargetRoleBadge targetRolesRaw={ann.targetRoles} size="sm" />
+                          </div>
+                          <div className="flex items-center gap-1 text-[11px] text-slate-400 mt-0.5">
+                            <Clock size={12} />
+                            <span>{formattedDate}</span>
+                          </div>
                         </div>
                       </div>
+
+                      {/* Admin Delete Action */}
+                      {isEmirgan && (
+                        <button
+                          onClick={() => handleDelete(ann.id)}
+                          className="p-2 text-slate-400 hover:text-red-600 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
+                          title="Duyuruyu Sil"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
                     </div>
 
-                    {/* Admin Delete Action */}
-                    {isEmirgan && (
-                      <button
-                        onClick={() => handleDelete(ann.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors opacity-0 group-hover:opacity-100 cursor-pointer"
-                        title="Duyuruyu Sil"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )}
+                    {/* Announcement Title */}
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white mb-3">
+                      {ann.title}
+                    </h2>
+
+                    {/* Rich HTML Content */}
+                    <div
+                      className={`${sizeClass} ${weightClass} text-slate-700 dark:text-slate-300 leading-relaxed prose prose-sm dark:prose-invert max-w-none break-words`}
+                      style={{ color: customColor }}
+                      dangerouslySetInnerHTML={{
+                        __html: DOMPurify.sanitize(ann.content)
+                      }}
+                    />
                   </div>
-
-                  {/* Announcement Title */}
-                  <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white mb-3">
-                    {ann.title}
-                  </h2>
-
-                  {/* Rich HTML Content */}
-                  <div
-                    className={`${sizeClass} ${weightClass} text-slate-700 dark:text-slate-300 leading-relaxed prose prose-sm dark:prose-invert max-w-none break-words`}
-                    style={{ color: customColor }}
-                    dangerouslySetInnerHTML={{
-                      __html: DOMPurify.sanitize(ann.content)
-                    }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

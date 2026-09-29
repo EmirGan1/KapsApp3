@@ -18,25 +18,20 @@ import {
   AlertCircle,
   Layers,
   Filter,
-  Eye
+  Eye,
+  Users,
+  Target
 } from "lucide-react";
 import { getApiUrl } from "../utils/api";
-
-export interface AgendaEvent {
-  id: number;
-  title: string;
-  event_date: string; // YYYY-MM-DD
-  event_time?: string | null; // HH:mm
-  event_type: "food" | "homework" | "exam" | "event" | "study";
-  description?: string | null;
-  created_by?: string;
-  created_at?: string;
-}
+import { AgendaEvent, isVisibleToUser, parseTargetRoles } from "../types";
+import TargetRoleSelector from "./TargetRoleSelector";
+import TargetRoleBadge from "./TargetRoleBadge";
 
 interface AgendaProps {
   socket: Socket | null;
   currentUserId: number;
   currentUsername?: string;
+  currentUserRoles?: string[];
 }
 
 const MONTH_NAMES_TR = [
@@ -49,9 +44,25 @@ const WEEKDAY_NAMES_TR = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 export default function Agenda({
   socket,
   currentUserId,
-  currentUsername
+  currentUsername,
+  currentUserRoles = []
 }: AgendaProps) {
   const isEmirgan = (currentUsername || "").trim().toLowerCase() === "emirgan";
+
+  // Effective roles for current user
+  const effectiveRoles = useMemo(() => {
+    if (Array.isArray(currentUserRoles) && currentUserRoles.length > 0) {
+      return currentUserRoles;
+    }
+    try {
+      const stored = localStorage.getItem("lan_user_roles");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return ["titc", "eng_b_hl"];
+  }, [currentUserRoles]);
 
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [events, setEvents] = useState<AgendaEvent[]>([]);
@@ -73,6 +84,7 @@ export default function Agenda({
   const [formTime, setFormTime] = useState("");
   const [formType, setFormType] = useState<"food" | "homework" | "exam" | "event" | "study">("food");
   const [formDescription, setFormDescription] = useState("");
+  const [formTargetRoles, setFormTargetRoles] = useState<string[]>([]);
   const [formSubmitting, setFormSubmitting] = useState(false);
 
   // Hover Tooltip state (Desktop)
@@ -220,10 +232,14 @@ export default function Agenda({
     return days;
   }, [year, month]);
 
-  // Group events by date string
+  // Group events by date string (filtered by user course roles visibility)
   const eventsByDate = useMemo(() => {
     const map: Record<string, AgendaEvent[]> = {};
     events.forEach((ev) => {
+      // Role visibility check: hidden if not visible to this user
+      if (!isVisibleToUser((ev as any).targetRoles || (ev as any).target_roles, effectiveRoles, isEmirgan)) {
+        return;
+      }
       if (selectedTypeFilter !== "all" && ev.event_type !== selectedTypeFilter) {
         return;
       }
@@ -231,7 +247,7 @@ export default function Agenda({
       map[ev.event_date].push(ev);
     });
     return map;
-  }, [events, selectedTypeFilter]);
+  }, [events, selectedTypeFilter, effectiveRoles, isEmirgan]);
 
   const handlePrevMonth = () => {
     setCurrentDate(new Date(year, month - 1, 1));
@@ -260,6 +276,7 @@ export default function Agenda({
     setFormTime("");
     setFormType("food");
     setFormDescription("");
+    setFormTargetRoles([]);
     setIsFormModalOpen(true);
   };
 
@@ -270,6 +287,7 @@ export default function Agenda({
     setFormTime(ev.event_time || "");
     setFormType(ev.event_type);
     setFormDescription(ev.description || "");
+    setFormTargetRoles(parseTargetRoles((ev as any).targetRoles || (ev as any).target_roles));
     setIsFormModalOpen(true);
   };
 
@@ -313,6 +331,7 @@ export default function Agenda({
       event_time: formTime.trim() || null,
       event_type: formType,
       description: formDescription.trim() || null,
+      targetRoles: formTargetRoles,
     };
 
     const token = localStorage.getItem("lan_token") || localStorage.getItem("token");
@@ -731,6 +750,9 @@ export default function Agenda({
           <h4 className="font-bold text-sm text-white mb-1">
             {hoveredEvent.event.title}
           </h4>
+          <div className="my-1">
+            <TargetRoleBadge targetRolesRaw={(hoveredEvent.event as any).targetRoles || (hoveredEvent.event as any).target_roles} size="sm" />
+          </div>
           {hoveredEvent.event.description && (
             <p className="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed line-clamp-4">
               {hoveredEvent.event.description}
@@ -994,6 +1016,7 @@ export default function Agenda({
                               <span>{ev.event_time}</span>
                             </span>
                           )}
+                          <TargetRoleBadge targetRolesRaw={(ev as any).targetRoles || (ev as any).target_roles} size="sm" />
                         </div>
 
                         {/* Admin Action Buttons */}
@@ -1174,6 +1197,13 @@ export default function Agenda({
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 text-sm outline-none focus:ring-2 focus:ring-blue-500 resize-none leading-relaxed"
                 />
               </div>
+
+              {/* Target Course Roles Selector */}
+              <TargetRoleSelector
+                selectedRoles={formTargetRoles}
+                onChange={setFormTargetRoles}
+                label="Kimler Görebilir? (Hedef Ders Rolleri)"
+              />
 
               <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <button

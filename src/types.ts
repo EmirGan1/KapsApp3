@@ -1,3 +1,29 @@
+export interface CourseRole {
+  id: string;
+  label: string;
+  color: string;
+  isDefault?: boolean;
+  subjectGroup?: string;
+  level?: "SL" | "HL";
+}
+
+export const COURSE_ROLES: CourseRole[] = [
+  { id: "titc", label: "TITC", color: "#E11D48", isDefault: true },
+  { id: "eng_b_hl", label: "English B HL", color: "#2563EB", isDefault: true, subjectGroup: "english", level: "HL" },
+  { id: "turkish_sl", label: "Turkish A SL", color: "#F97316", subjectGroup: "turkish", level: "SL" },
+  { id: "turkish_hl", label: "Turkish A HL", color: "#EA580C", subjectGroup: "turkish", level: "HL" },
+  { id: "math_sl", label: "Mathematics SL", color: "#38BDF8", subjectGroup: "math", level: "SL" },
+  { id: "math_hl", label: "Mathematics HL", color: "#0284C7", subjectGroup: "math", level: "HL" },
+  { id: "physics_sl", label: "Physics SL", color: "#A855F7", subjectGroup: "physics", level: "SL" },
+  { id: "physics_hl", label: "Physics HL", color: "#7E22CE", subjectGroup: "physics", level: "HL" },
+  { id: "psychology_sl", label: "Psychology SL", color: "#EC4899", subjectGroup: "psychology", level: "SL" },
+  { id: "psychology_hl", label: "Psychology HL", color: "#BE185D", subjectGroup: "psychology", level: "HL" },
+  { id: "chemistry_sl", label: "Chemistry SL", color: "#14B8A6", subjectGroup: "chemistry", level: "SL" },
+  { id: "chemistry_hl", label: "Chemistry HL", color: "#0F766E", subjectGroup: "chemistry", level: "HL" },
+  { id: "biology_sl", label: "Biology SL", color: "#22C55E", subjectGroup: "biology", level: "SL" },
+  { id: "biology_hl", label: "Biology HL", color: "#15803D", subjectGroup: "biology", level: "HL" },
+];
+
 export interface User {
   id: number;
   username: string;
@@ -7,6 +33,8 @@ export interface User {
   last_seen: string;
   signup_ip?: string | null;
   last_ip?: string | null;
+  roles?: string[];
+  is_admin?: number;
 }
 
 export interface Post {
@@ -120,6 +148,8 @@ export interface UserProfileData {
   friendStatus?: 'none' | 'pending_sent' | 'pending_received' | 'friends';
   signup_ip?: string | null;
   last_ip?: string | null;
+  roles?: string[];
+  is_admin?: number;
 }
 
 export interface MediaModalData {
@@ -223,9 +253,71 @@ export interface DrawGuessChatMessage {
   userId: number;
   username: string;
   text: string;
-  isSystem?: boolean;
   isCorrect?: boolean;
+  isCorrectGuess?: boolean;
+  isClose?: boolean;
   isCloseGuess?: boolean;
   isWarning?: boolean;
+  isSystem?: boolean;
   createdAt: string;
 }
+
+export interface AgendaEvent {
+  id: number;
+  title: string;
+  event_date: string; // YYYY-MM-DD
+  event_time?: string | null; // HH:mm
+  event_type: "food" | "homework" | "exam" | "event" | "study";
+  description?: string | null;
+  targetRoles?: string[];
+  created_by?: string;
+  created_at?: string;
+}
+
+export interface AnnouncementStyles {
+  color?: string;
+  fontWeight?: "normal" | "medium" | "bold";
+  fontSize?: "sm" | "base" | "lg" | "xl";
+}
+
+export interface AnnouncementItem {
+  id: number;
+  title: string;
+  content: string;
+  styles?: AnnouncementStyles | string;
+  targetRoles?: string[];
+  author_id: number;
+  author_username: string;
+  created_at: string;
+}
+
+export const parseTargetRoles = (raw: any): string[] => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+    } catch {}
+    if (raw.trim() && raw.trim() !== "[]" && raw.trim() !== "all") {
+      return [raw.trim()];
+    }
+  }
+  return [];
+};
+
+export const isVisibleToUser = (
+  targetRolesRaw: any,
+  userRoles: string[] = [],
+  isEmirganOrAdmin: boolean = false
+): boolean => {
+  if (isEmirganOrAdmin) return true;
+  const targetRoles = parseTargetRoles(targetRolesRaw);
+  // If targetRoles is empty or contains "all" -> visible to everyone
+  if (targetRoles.length === 0 || targetRoles.includes("all")) {
+    return true;
+  }
+  // Check if at least one target role matches the user's roles
+  const normalizedUserRoles = (userRoles || []).map((r) => r.toLowerCase().trim());
+  return targetRoles.some((tr) => normalizedUserRoles.includes(tr.toLowerCase().trim()));
+};

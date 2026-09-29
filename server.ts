@@ -294,10 +294,39 @@ async function initDb() {
   try { await client.execute("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'pending'"); } catch(e){}
   try { await client.execute("ALTER TABLE users ADD COLUMN approved_by TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE users ADD COLUMN approved_at DATETIME"); } catch(e){}
+  try { await client.execute("ALTER TABLE users ADD COLUMN roles TEXT DEFAULT '[\"titc\",\"eng_b_hl\"]'"); } catch(e){}
+  
   // 1. emirgan kullanıcısını kesin olarak approved ve admin yap
   try { await client.execute("UPDATE users SET status = 'approved', is_admin = 1 WHERE LOWER(username) = 'emirgan'"); } catch(e){}
   // 2. Geçmişte takılı kalan veya emirgan dışındaki eski kullanıcıları approved yap:
   try { await client.execute("UPDATE users SET status = 'approved' WHERE status IS NULL OR status = '' OR status = 'pending'"); } catch(e){}
+
+  // 3. IB Ders Rolleri Göçü: Tüm mevcut kullanıcılarda 'titc' ve 'eng_b_hl' zorunlu varsayılan rollerini sağla
+  try {
+    const allUsersRes = await client.execute("SELECT id, roles FROM users");
+    for (const u of allUsersRes.rows) {
+      let currentRoles: string[] = [];
+      if (u.roles) {
+        if (typeof u.roles === "string") {
+          try {
+            const parsed = JSON.parse(u.roles);
+            if (Array.isArray(parsed)) currentRoles = parsed;
+          } catch {}
+        } else if (Array.isArray(u.roles)) {
+          currentRoles = u.roles;
+        }
+      }
+      const updatedRoles = Array.from(new Set([...currentRoles, "titc", "eng_b_hl"]));
+      if (!u.roles || currentRoles.length !== updatedRoles.length) {
+        await client.execute({
+          sql: "UPDATE users SET roles = ? WHERE id = ?",
+          args: [JSON.stringify(updatedRoles), u.id]
+        });
+      }
+    }
+  } catch(e) {
+    console.error("IB Course roles migration error:", e);
+  }
 
   // Announcements (Duyurular) Table
   await client.execute(`CREATE TABLE IF NOT EXISTS announcements (
@@ -305,11 +334,27 @@ async function initDb() {
     title TEXT,
     content TEXT NOT NULL,
     styles TEXT,
+    target_roles TEXT,
     author_id INTEGER,
     author_username TEXT,
     created_at TEXT
   )`);
   try { await client.execute("ALTER TABLE announcements ADD COLUMN styles TEXT"); } catch(e){}
+  try { await client.execute("ALTER TABLE announcements ADD COLUMN target_roles TEXT"); } catch(e){}
+
+  // Agenda (Ajanda & Takvim) Table
+  await client.execute(`CREATE TABLE IF NOT EXISTS agenda_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    event_date TEXT NOT NULL,
+    event_time TEXT,
+    event_type TEXT NOT NULL,
+    description TEXT,
+    target_roles TEXT,
+    created_by TEXT DEFAULT 'emirgan',
+    created_at TEXT
+  )`);
+  try { await client.execute("ALTER TABLE agenda_events ADD COLUMN target_roles TEXT"); } catch(e){}
 
   // 5651 Sayılı Kanun Traffic & IP Access Logs Table
   await client.execute(`CREATE TABLE IF NOT EXISTS access_logs (
@@ -677,6 +722,63 @@ async function startServer() {
     userCache.delete(Number(id));
   };
 
+  // Helper to safely parse user IB course roles array
+  const parseRoles = (rolesField: any): string[] => {
+    if (!rolesField) return ["titc", "eng_b_hl"];
+    if (Array.isArray(rolesField)) {
+      const unique = Array.from(new Set(rolesField.map((r: any) => String(r).trim())));
+      if (!unique.includes("titc")) unique.unshift("titc");
+      if (!unique.includes("eng_b_hl")) unique.push("eng_b_hl");
+      return unique;
+    }
+    if (typeof rolesField === "string") {
+      try {
+        const parsed = JSON.parse(rolesField);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const unique = Array.from(new Set(parsed.map((r: any) => String(r).trim())));
+          if (!unique.includes("titc")) unique.unshift("titc");
+          if (!unique.includes("eng_b_hl")) unique.push("eng_b_hl");
+          return unique;
+        }
+      } catch {}
+    }
+    return ["titc", "eng_b_hl"];
+  };
+
+  // Helper to parse target roles for announcements and agenda events
+  const parseTargetRolesServer = (raw: any): string[] => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.map(String).map((s) => s.trim()).filter(Boolean);
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.map(String).map((s) => s.trim()).filter(Boolean);
+      } catch {}
+      const trimmed = raw.trim();
+      if (trimmed && trimmed !== "[]" && trimmed !== "all") {
+        return [trimmed];
+      }
+    }
+    return [];
+  };
+
+  // Check if an item with targetRoles is visible to a user
+  const isRoleMatchServer = (
+    targetRolesRaw: any,
+    userRolesRaw: any,
+    username?: string,
+    isAdmin?: number
+  ): boolean => {
+    const isEmirgan = (username || "").trim().toLowerCase() === "emirgan";
+    if (isEmirgan || Number(isAdmin) === 1) return true;
+    const targetRoles = parseTargetRolesServer(targetRolesRaw);
+    if (targetRoles.length === 0 || targetRoles.includes("all")) {
+      return true;
+    }
+    const userRoles = parseRoles(userRolesRaw).map((r) => r.toLowerCase().trim());
+    return targetRoles.some((tr) => userRoles.includes(tr.toLowerCase().trim()));
+  };
+
   const getUser = async (id: number) => {
     const numId = Number(id);
     if (!numId) return null;
@@ -687,10 +789,15 @@ async function startServer() {
     }
     try {
       const res = await client.execute({ 
-        sql: "SELECT id, username, avatar, color, chips, okey_wins, uno_wins, blackjack_wins, batak_wins, signup_ip, last_ip, isBanned, locationConsent, is_admin FROM users WHERE id = ?", 
+        sql: "SELECT id, username, avatar, color, chips, okey_wins, uno_wins, blackjack_wins, batak_wins, signup_ip, last_ip, isBanned, locationConsent, is_admin, roles FROM users WHERE id = ?", 
         args: [numId] 
       });
-      const u = res.rows.length > 0 ? res.rows[0] : null;
+      if (res.rows.length === 0) return null;
+      const row = res.rows[0];
+      const u = {
+        ...row,
+        roles: parseRoles(row.roles)
+      };
       userCache.set(numId, { data: u, expiresAt: now + 45000 });
       return u;
     } catch (e) {
@@ -797,9 +904,10 @@ async function startServer() {
       const deviceId = typeof rawDeviceId === "string" ? rawDeviceId.trim() : "";
       const locConsentValue = (locationConsent === true || locationConsent === 1) ? 1 : 0;
       
+      const defaultRoles = JSON.stringify(["titc", "eng_b_hl"]);
       const insertResult = await client.execute({
-        sql: "INSERT INTO users (username, password, color, token, last_seen, signup_ip, last_ip, device_fingerprint, last_device_id, locationConsent, isBanned, is_banned, status) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, 0, 'pending')",
-        args: [username, hash, randomColor, lastSeen, clientIp, clientIp, deviceId || null, deviceId || null, locConsentValue]
+        sql: "INSERT INTO users (username, password, color, token, last_seen, signup_ip, last_ip, device_fingerprint, last_device_id, locationConsent, isBanned, is_banned, status, roles) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 0, 0, 'pending', ?)",
+        args: [username, hash, randomColor, lastSeen, clientIp, clientIp, deviceId || null, deviceId || null, locConsentValue, defaultRoles]
       });
 
       const newUserId = Number(insertResult.lastInsertRowid);
@@ -2939,7 +3047,7 @@ async function startServer() {
       const result = await client.execute(`
         SELECT id, username, email, avatar, color, status, is_admin, is_banned, isBanned, banned_at, ban_reason,
                created_at, last_seen, signup_ip, last_ip, device_fingerprint, last_device_id, uno_wins, okey_wins,
-               COALESCE(chips, 1000) AS chips
+               COALESCE(chips, 1000) AS chips, roles
         FROM users WHERE status != 'pending' OR status IS NULL ORDER BY id DESC LIMIT 1000
       `);
 
@@ -2949,6 +3057,7 @@ async function startServer() {
         const isOnline = onlineUsers.has(uid) || onlineUsers.has(uname as any);
         return {
           ...u,
+          roles: parseRoles(u.roles),
           isOnline: Boolean(isOnline)
         };
       });
@@ -2960,6 +3069,72 @@ async function startServer() {
     } catch (err: any) {
       console.error("[EMIRGAN ADMIN] All users fetch error:", err);
       return res.status(500).json({ error: "Kullanıcı listesi alınamadı: " + err.message });
+    }
+  });
+
+  // Get specific user by ID
+  app.get("/api/users/:id", async (req, res) => {
+    try {
+      const targetId = Number(req.params.id);
+      if (!targetId || isNaN(targetId)) return res.status(400).json({ error: "Geçersiz ID" });
+      const u = await getUser(targetId);
+      if (!u) return res.status(404).json({ error: "Kullanıcı bulunamadı" });
+      return res.json({
+        id: u.id,
+        username: u.username,
+        avatar: u.avatar,
+        color: u.color,
+        roles: parseRoles(u.roles),
+        is_admin: u.is_admin
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Admin (emirgan): Update user IB course roles
+  app.put(["/api/users/:id/roles", "/api/emirgan/users/:id/roles", "/api/admin/users/:id/roles"], requireEmirganAdmin, async (req, res) => {
+    try {
+      const rawId = req.params.id || (req.params as any).userId;
+      const targetId = Number(rawId);
+      if (!targetId || isNaN(targetId)) {
+        return res.status(400).json({ error: "Geçerli bir kullanıcı ID gereklidir." });
+      }
+
+      const targetRes = await client.execute({ sql: "SELECT id, username, roles FROM users WHERE id = ?", args: [targetId] });
+      if (targetRes.rows.length === 0) return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+      const targetUser = targetRes.rows[0];
+
+      let rawRoles = req.body?.roles;
+      if (!Array.isArray(rawRoles)) {
+        return res.status(400).json({ error: "Roller bir dizi (array) olmalıdır." });
+      }
+
+      const cleanedRoles = Array.from(new Set(rawRoles.map((r: any) => String(r).trim())));
+      if (!cleanedRoles.includes("titc")) cleanedRoles.unshift("titc");
+      if (!cleanedRoles.includes("eng_b_hl")) cleanedRoles.push("eng_b_hl");
+
+      const rolesJson = JSON.stringify(cleanedRoles);
+      await client.execute({
+        sql: "UPDATE users SET roles = ? WHERE id = ?",
+        args: [rolesJson, targetId]
+      });
+
+      invalidateUserCache(targetId);
+
+      // Realtime live broadcasts
+      io.emit("user:roles_updated", { userId: targetId, roles: cleanedRoles });
+      io.emit("profile_updated", targetId);
+
+      return res.json({
+        success: true,
+        message: `"${targetUser.username}" kullanıcısının ders rolleri güncellendi.`,
+        userId: targetId,
+        roles: cleanedRoles
+      });
+    } catch (err: any) {
+      console.error("[EMIRGAN ADMIN] Update user roles error:", err);
+      return res.status(500).json({ error: "Roller güncellenirken hata oluştu: " + err.message });
     }
   });
 
@@ -3034,7 +3209,11 @@ async function startServer() {
       }
       query += " ORDER BY event_date ASC, event_time ASC";
       const result = await client.execute({ sql: query, args });
-      return res.json(result.rows);
+      const mapped = result.rows.map((row: any) => ({
+        ...row,
+        targetRoles: parseTargetRolesServer(row.target_roles)
+      }));
+      return res.json(mapped);
     } catch (err: any) {
       console.error("GET /api/agenda error:", err);
       return res.status(500).json({ error: err.message });
@@ -3043,20 +3222,27 @@ async function startServer() {
 
   app.post("/api/agenda", requireEmirganAdmin, async (req, res) => {
     try {
-      const { title, event_date, event_time, event_type, description } = req.body;
+      const { title, event_date, event_time, event_type, description, targetRoles } = req.body;
       if (!title || !event_date || !event_type) {
         return res.status(400).json({ error: "Eksik bilgi: Başlık, tarih ve tür zorunludur." });
       }
 
+      const parsedTarget = parseTargetRolesServer(targetRoles);
+      const targetRolesStr = parsedTarget.length > 0 ? JSON.stringify(parsedTarget) : null;
+
       const result = await client.execute({
-        sql: `INSERT INTO agenda_events (title, event_date, event_time, event_type, description, created_by)
-              VALUES (?, ?, ?, ?, ?, 'emirgan')`,
-        args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null]
+        sql: `INSERT INTO agenda_events (title, event_date, event_time, event_type, description, target_roles, created_by)
+              VALUES (?, ?, ?, ?, ?, ?, 'emirgan')`,
+        args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null, targetRolesStr]
       });
 
       const newId = Number(result.lastInsertRowid);
       const inserted = await client.execute({ sql: "SELECT * FROM agenda_events WHERE id = ?", args: [newId] });
-      const newEvent = inserted.rows[0];
+      const rawEvent = inserted.rows[0];
+      const newEvent = {
+        ...rawEvent,
+        targetRoles: parsedTarget
+      };
 
       // Broadcast real-time event to all connected users
       io.emit("new_agenda_event", newEvent);
@@ -3068,19 +3254,22 @@ async function startServer() {
         title: `📅 Yeni ${typeLabel}`,
         body: `"${title}" ajandaya eklendi (${event_date}).`,
         type: "info",
-        targetTab: "agenda"
+        targetTab: "agenda",
+        targetRoles: parsedTarget
       });
 
-      // Insert notification for all users so it appears in their Notifications tab
+      // Insert notification ONLY for target users matching the course roles
       try {
         const notifContent = `📅 Yeni ${typeLabel}: "${title}" ajandaya eklendi (${event_date}).`;
-        const allUsers = await client.execute("SELECT id FROM users");
+        const allUsers = await client.execute("SELECT id, username, roles, is_admin FROM users");
         const nowIso = new Date().toISOString();
         for (const u of allUsers.rows) {
-          await client.execute({
-            sql: "INSERT INTO notifications (user_id, type, content, read, created_at) VALUES (?, 'agenda', ?, 0, ?)",
-            args: [u.id, notifContent, nowIso]
-          }).catch(() => {});
+          if (isRoleMatchServer(parsedTarget, u.roles, u.username as string, Number(u.is_admin))) {
+            await client.execute({
+              sql: "INSERT INTO notifications (user_id, type, content, read, created_at) VALUES (?, 'agenda', ?, 0, ?)",
+              args: [u.id, notifContent, nowIso]
+            }).catch(() => {});
+          }
         }
         io.emit("notifications_updated");
       } catch (notifErr) {}
@@ -3095,22 +3284,28 @@ async function startServer() {
   app.put("/api/agenda/:id", requireEmirganAdmin, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const { title, event_date, event_time, event_type, description } = req.body;
+      const { title, event_date, event_time, event_type, description, targetRoles } = req.body;
       if (!title || !event_date || !event_type) {
         return res.status(400).json({ error: "Eksik bilgi." });
       }
 
+      const parsedTarget = parseTargetRolesServer(targetRoles);
+      const targetRolesStr = parsedTarget.length > 0 ? JSON.stringify(parsedTarget) : null;
+
       await client.execute({
         sql: `UPDATE agenda_events 
-              SET title = ?, event_date = ?, event_time = ?, event_type = ?, description = ?
+              SET title = ?, event_date = ?, event_time = ?, event_type = ?, description = ?, target_roles = ?
               WHERE id = ?`,
-        args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null, id]
+        args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null, targetRolesStr, id]
       });
 
       const updated = await client.execute({ sql: "SELECT * FROM agenda_events WHERE id = ?", args: [id] });
       if (updated.rows.length === 0) return res.status(404).json({ error: "Etkinlik bulunamadı." });
 
-      const updatedEvent = updated.rows[0];
+      const updatedEvent = {
+        ...updated.rows[0],
+        targetRoles: parsedTarget
+      };
       io.emit("agenda_event_updated", updatedEvent);
       io.emit("agenda_updated");
       return res.json(updatedEvent);
@@ -5027,6 +5222,7 @@ async function startServer() {
           username: u.username, 
           avatar: u.avatar, 
           color: u.color, 
+          roles: parseRoles(u.roles),
           followersCount: Number(followersRes.rows[0]?.count || 0),
           followingCount: Number(followingRes.rows[0]?.count || 0),
           isFollowing,
@@ -5035,6 +5231,42 @@ async function startServer() {
         });
       } else {
         cb(null);
+      }
+    });
+
+    socket.on("update_user_roles", async (data: { targetUserId: number; roles: string[] }, cb?: (res: any) => void) => {
+      try {
+        const isEmirgan = (user.username && user.username.trim().toLowerCase() === "emirgan") || Number(user.is_admin) === 1;
+        if (!isEmirgan) {
+          if (cb) cb({ error: "Bu işlem sadece yöneticiye (emirgan) aittir." });
+          return;
+        }
+
+        const targetId = Number(data?.targetUserId);
+        if (!targetId || !Array.isArray(data?.roles)) {
+          if (cb) cb({ error: "Geçersiz parametreler." });
+          return;
+        }
+
+        let newRoles = Array.from(new Set(data.roles.map((r: any) => String(r).trim())));
+        if (!newRoles.includes("titc")) newRoles.unshift("titc");
+        if (!newRoles.includes("eng_b_hl")) newRoles.push("eng_b_hl");
+
+        const rolesJson = JSON.stringify(newRoles);
+        await client.execute({
+          sql: "UPDATE users SET roles = ? WHERE id = ?",
+          args: [rolesJson, targetId]
+        });
+
+        invalidateUserCache(targetId);
+
+        io.emit("user:roles_updated", { userId: targetId, roles: newRoles });
+        io.emit("profile_updated", targetId);
+
+        if (cb) cb({ success: true, userId: targetId, roles: newRoles });
+      } catch (err: any) {
+        console.error("update_user_roles socket error:", err);
+        if (cb) cb({ error: err.message });
       }
     });
 
@@ -5477,7 +5709,11 @@ async function startServer() {
         }
         query += " ORDER BY event_date ASC, event_time ASC";
         const res = await client.execute({ sql: query, args });
-        if (typeof cb === "function") cb(res.rows);
+        const mapped = res.rows.map((row: any) => ({
+          ...row,
+          targetRoles: parseTargetRolesServer(row.target_roles)
+        }));
+        if (typeof cb === "function") cb(mapped);
       } catch (err: any) {
         if (typeof cb === "function") cb({ error: err.message });
       }
@@ -5492,21 +5728,28 @@ async function startServer() {
           return;
         }
 
-        const { title, event_date, event_time, event_type, description } = payload || {};
+        const { title, event_date, event_time, event_type, description, targetRoles } = payload || {};
         if (!title || !event_date || !event_type) {
           if (typeof cb === "function") cb({ error: "Eksik bilgi: Başlık, tarih ve tür zorunludur." });
           return;
         }
 
+        const parsedTarget = parseTargetRolesServer(targetRoles);
+        const targetRolesStr = parsedTarget.length > 0 ? JSON.stringify(parsedTarget) : null;
+
         const result = await client.execute({
-          sql: `INSERT INTO agenda_events (title, event_date, event_time, event_type, description, created_by)
-                VALUES (?, ?, ?, ?, ?, 'emirgan')`,
-          args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null]
+          sql: `INSERT INTO agenda_events (title, event_date, event_time, event_type, description, target_roles, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, 'emirgan')`,
+          args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null, targetRolesStr]
         });
 
         const newId = Number(result.lastInsertRowid);
         const inserted = await client.execute({ sql: "SELECT * FROM agenda_events WHERE id = ?", args: [newId] });
-        const newEvent = inserted.rows[0];
+        const rawEvent = inserted.rows[0];
+        const newEvent = {
+          ...rawEvent,
+          targetRoles: parsedTarget
+        };
 
         io.emit("new_agenda_event", newEvent);
         io.emit("agenda_updated");
@@ -5516,18 +5759,21 @@ async function startServer() {
           title: `📅 Yeni ${typeLabel}`,
           body: `"${title}" ajandaya eklendi (${event_date}).`,
           type: "info",
-          targetTab: "agenda"
+          targetTab: "agenda",
+          targetRoles: parsedTarget
         });
 
         try {
           const notifContent = `📅 Yeni ${typeLabel}: "${title}" ajandaya eklendi (${event_date}).`;
-          const allUsers = await client.execute("SELECT id FROM users");
+          const allUsers = await client.execute("SELECT id, username, roles, is_admin FROM users");
           const nowIso = new Date().toISOString();
           for (const u of allUsers.rows) {
-            await client.execute({
-              sql: "INSERT INTO notifications (user_id, type, content, read, created_at) VALUES (?, 'agenda', ?, 0, ?)",
-              args: [u.id, notifContent, nowIso]
-            }).catch(() => {});
+            if (isRoleMatchServer(parsedTarget, u.roles, u.username as string, Number(u.is_admin))) {
+              await client.execute({
+                sql: "INSERT INTO notifications (user_id, type, content, read, created_at) VALUES (?, 'agenda', ?, 0, ?)",
+                args: [u.id, notifContent, nowIso]
+              }).catch(() => {});
+            }
           }
           io.emit("notifications_updated");
         } catch (notifErr) {}
@@ -5547,21 +5793,27 @@ async function startServer() {
           return;
         }
 
-        const { id, title, event_date, event_time, event_type, description } = payload || {};
+        const { id, title, event_date, event_time, event_type, description, targetRoles } = payload || {};
         if (!id || !title || !event_date || !event_type) {
           if (typeof cb === "function") cb({ error: "Eksik bilgi." });
           return;
         }
 
+        const parsedTarget = parseTargetRolesServer(targetRoles);
+        const targetRolesStr = parsedTarget.length > 0 ? JSON.stringify(parsedTarget) : null;
+
         await client.execute({
           sql: `UPDATE agenda_events 
-                SET title = ?, event_date = ?, event_time = ?, event_type = ?, description = ?
+                SET title = ?, event_date = ?, event_time = ?, event_type = ?, description = ?, target_roles = ?
                 WHERE id = ?`,
-          args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null, Number(id)]
+          args: [title.trim(), event_date, event_time?.trim() || null, event_type, description?.trim() || null, targetRolesStr, Number(id)]
         });
 
         const updated = await client.execute({ sql: "SELECT * FROM agenda_events WHERE id = ?", args: [Number(id)] });
-        const updatedEvent = updated.rows[0];
+        const updatedEvent = {
+          ...updated.rows[0],
+          targetRoles: parsedTarget
+        };
         io.emit("agenda_event_updated", updatedEvent);
         io.emit("agenda_updated");
         if (typeof cb === "function") cb(updatedEvent);
@@ -6341,16 +6593,20 @@ async function startServer() {
     socket.on("get_announcements", async (cb?: (res: any) => void) => {
       try {
         const res = await client.execute({
-          sql: "SELECT id, title, content, styles, author_id, author_username, created_at FROM announcements ORDER BY id DESC LIMIT 50"
+          sql: "SELECT id, title, content, styles, target_roles, author_id, author_username, created_at FROM announcements ORDER BY id DESC LIMIT 50"
         });
-        if (cb) cb({ announcements: res.rows });
+        const mapped = res.rows.map((row: any) => ({
+          ...row,
+          targetRoles: parseTargetRolesServer(row.target_roles)
+        }));
+        if (cb) cb({ announcements: mapped });
       } catch (err: any) {
         console.error("get_announcements error:", err);
         if (cb) cb({ error: "Duyurular alınamadı." });
       }
     });
 
-    socket.on("create_announcement", async (data: { title?: string; content: string; styles?: any }, cb?: (res: any) => void) => {
+    socket.on("create_announcement", async (data: { title?: string; content: string; styles?: any; targetRoles?: string[] }, cb?: (res: any) => void) => {
       const isEmirgan = user.username && (user.username as string).trim().toLowerCase() === 'emirgan';
       if (!isEmirgan) {
         if (cb) cb({ error: "Yetkisiz işlem: Sadece 'emirgan' kullanıcısı duyuru yayınlayabilir." });
@@ -6360,6 +6616,8 @@ async function startServer() {
         const title = (data.title || "Sistem Duyurusu").trim();
         const content = (data.content || "").trim();
         const styles = data.styles ? (typeof data.styles === "string" ? data.styles : JSON.stringify(data.styles)) : null;
+        const parsedTarget = parseTargetRolesServer(data.targetRoles);
+        const targetRolesStr = parsedTarget.length > 0 ? JSON.stringify(parsedTarget) : null;
 
         if (!content) {
           if (cb) cb({ error: "Duyuru içeriği boş olamaz." });
@@ -6368,8 +6626,8 @@ async function startServer() {
 
         const createdAt = new Date().toISOString();
         const insertRes = await client.execute({
-          sql: "INSERT INTO announcements (title, content, styles, author_id, author_username, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-          args: [title, content, styles, Number(user.id), user.username as string, createdAt]
+          sql: "INSERT INTO announcements (title, content, styles, target_roles, author_id, author_username, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          args: [title, content, styles, targetRolesStr, Number(user.id), user.username as string, createdAt]
         });
 
         const newAnnouncement = {
@@ -6377,6 +6635,7 @@ async function startServer() {
           title,
           content,
           styles,
+          targetRoles: parsedTarget,
           author_id: Number(user.id),
           author_username: user.username as string,
           created_at: createdAt
@@ -6385,6 +6644,21 @@ async function startServer() {
         // Real-time broadcast to all connected users
         io.emit("new_announcement", newAnnouncement);
         io.emit("new_global_announcement", newAnnouncement);
+
+        // Targeted in-app notification insertion
+        try {
+          const notifContent = `📢 Yeni Duyuru: "${title}"`;
+          const allUsers = await client.execute("SELECT id, username, roles, is_admin FROM users");
+          for (const u of allUsers.rows) {
+            if (isRoleMatchServer(parsedTarget, u.roles, u.username as string, Number(u.is_admin))) {
+              await client.execute({
+                sql: "INSERT INTO notifications (user_id, type, content, read, created_at) VALUES (?, 'announcement', ?, 0, ?)",
+                args: [u.id, notifContent, createdAt]
+              }).catch(() => {});
+            }
+          }
+          io.emit("notifications_updated");
+        } catch (notifErr) {}
 
         if (cb) cb({ success: true, announcement: newAnnouncement });
       } catch (err: any) {

@@ -25,6 +25,7 @@ import ActiveCallPanel from "./components/ActiveCallPanel";
 import VoiceCallInviteModal, { VoiceCallInvite } from "./components/VoiceCallInviteModal";
 import { getSocketUrl, getApiUrl } from "./utils/api";
 import { getCachedHardwareFingerprint, getHardwareFingerprint } from "./utils/deviceFingerprint";
+import { isVisibleToUser } from "./types";
 
 const SUBJECTS = ["Turkish", "Mathematics", "Physics", "Digital Society", "English", "Chemistry", "Biology", "TITC"];
 
@@ -36,6 +37,16 @@ export default function App() {
     return stored === "null" ? null : stored;
   });
   const [color, setColor] = useState<string | undefined>(localStorage.getItem("lan_color") || undefined);
+  const [currentUserRoles, setCurrentUserRoles] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("lan_user_roles");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return ["titc", "eng_b_hl"];
+  });
   
   const [socket, setSocket] = useState<Socket | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<number[]>([]);
@@ -423,9 +434,43 @@ export default function App() {
       newSocket.on("user:approved", fetchPendingApprovals);
       newSocket.on("user:rejected", fetchPendingApprovals);
 
-      // Announcements socket listeners & initial unread checking
+      // User Roles Updated socket listener (Emirgan instant role management)
+      newSocket.on("user:roles_updated", (data: any) => {
+        if (Number(data?.userId) === Number(currentUserId) && Array.isArray(data?.roles)) {
+          setCurrentUserRoles(data.roles);
+          localStorage.setItem("lan_user_roles", JSON.stringify(data.roles));
+          addToast({
+            type: "system",
+            title: "🎖️ IB Ders Rolleri Güncellendi",
+            text: "Ders rolleriniz yönetici tarafından güncellendi.",
+            senderName: "Sistem",
+            senderColor: "#6366f1"
+          });
+        }
+      });
+
+      // Fetch user's current roles if not set
+      if (currentUserId) {
+        fetch(getApiUrl(`/api/users/${currentUserId}`), {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+          .then((r) => r.json())
+          .then((uData) => {
+            if (uData && Array.isArray(uData.roles) && uData.roles.length > 0) {
+              setCurrentUserRoles(uData.roles);
+              localStorage.setItem("lan_user_roles", JSON.stringify(uData.roles));
+            }
+          })
+          .catch(() => {});
+      }
+
+      // Announcements socket listeners & initial unread checking (Role-filtered)
+      const isEmirganUser = (username || "").trim().toLowerCase() === "emirgan";
       const handleIncomingAnnouncement = (announcement: AnnouncementItem) => {
         if (announcement && announcement.id) {
+          const isVisible = isVisibleToUser(announcement.targetRoles, currentUserRoles, isEmirganUser);
+          if (!isVisible) return;
+
           latestAnnouncementIdRef.current = Math.max(latestAnnouncementIdRef.current, Number(announcement.id));
           const lastRead = Number(localStorage.getItem("latest_read_announcement_id") || 0);
           if (Number(announcement.id) > lastRead) {
@@ -452,11 +497,16 @@ export default function App() {
       // Initial check for unread announcements
       newSocket.emit("get_announcements", (res: any) => {
         if (res?.announcements && Array.isArray(res.announcements) && res.announcements.length > 0) {
-          const newestId = Math.max(...res.announcements.map((a: any) => Number(a.id)));
-          latestAnnouncementIdRef.current = newestId;
-          const lastRead = Number(localStorage.getItem("latest_read_announcement_id") || 0);
-          if (newestId > lastRead) {
-            setHasUnreadAnnouncement(true);
+          const visibleList = res.announcements.filter((a: any) =>
+            isVisibleToUser(a.targetRoles, currentUserRoles, isEmirganUser)
+          );
+          if (visibleList.length > 0) {
+            const newestId = Math.max(...visibleList.map((a: any) => Number(a.id)));
+            latestAnnouncementIdRef.current = newestId;
+            const lastRead = Number(localStorage.getItem("latest_read_announcement_id") || 0);
+            if (newestId > lastRead) {
+              setHasUnreadAnnouncement(true);
+            }
           }
         }
       });
@@ -822,6 +872,7 @@ export default function App() {
             socket={socket} 
             username={username} 
             currentUserId={currentUserId} 
+            currentUserRoles={currentUserRoles}
             onAnnouncementsRead={(latestId) => {
               latestAnnouncementIdRef.current = latestId;
               localStorage.setItem("latest_read_announcement_id", String(latestId));
@@ -834,6 +885,7 @@ export default function App() {
             socket={socket} 
             currentUserId={currentUserId} 
             currentUsername={username} 
+            currentUserRoles={currentUserRoles}
           />
         )}
         {activeTab === 'global' && <GlobalChat socket={socket} currentUserId={currentUserId} currentUsername={username} onlineUsers={onlineUsers} onUserClick={handleUserClick} />}

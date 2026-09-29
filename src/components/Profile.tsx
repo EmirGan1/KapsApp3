@@ -9,6 +9,8 @@ import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
 import MultiMediaPostViewer, { extractPostMediaItems } from "./MultiMediaPostViewer";
 import AdminModerationMenu from "./AdminModerationMenu";
+import RoleBadges from "./RoleBadges";
+import EditRolesModal from "./EditRolesModal";
 import { MediaModalData } from "../types";
 import { getApiUrl } from "../utils/api";
 
@@ -59,6 +61,7 @@ export default function Profile({
 
   // Admin User Moderation State
   const [showDeleteUserModal, setShowDeleteUserModal] = useState(false);
+  const [showRolesModal, setShowRolesModal] = useState(false);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
   const [isBanningUser, setIsBanningUser] = useState(false);
   const [deleteUserError, setDeleteUserError] = useState("");
@@ -115,10 +118,23 @@ export default function Profile({
     socket.on("profile_updated", onProfileUpdated);
     socket.on("friends_updated", loadProfile);
 
+    const onRolesUpdated = (data: any) => {
+      const targetId = Number(data?.userId || data?.id);
+      if (targetId === viewingUserId || targetId === currentUserId) {
+        if (data?.roles && Array.isArray(data.roles)) {
+          setUserProfile((prev: any) => prev ? { ...prev, roles: data.roles } : prev);
+        } else {
+          loadProfile();
+        }
+      }
+    };
+    socket.on("user:roles_updated", onRolesUpdated);
+
     return () => {
       socket.off("feed_updated", loadPosts);
       socket.off("post_deleted", onPostDeleted);
       socket.off("profile_updated", onProfileUpdated);
+      socket.off("user:roles_updated", onRolesUpdated);
       socket.off("friends_updated", loadProfile);
     };
   }, [socket, currentUserId, viewingUserId, currentUsername, currentAvatar, currentColor, isMe]);
@@ -316,7 +332,7 @@ export default function Profile({
         </div>
 
         <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-1">{userProfile.username}</h2>
-        <div className="flex items-center gap-3 sm:gap-6 text-slate-500 dark:text-slate-400 text-sm mb-4">
+        <div className="flex items-center gap-3 sm:gap-6 text-slate-500 dark:text-slate-400 text-sm mb-3">
           <div className="flex items-center gap-1.5 py-1 px-2.5 rounded-lg">
             <span className="font-bold text-slate-900 dark:text-slate-100">{userPosts.length}</span>
             <span className="text-slate-500 text-xs sm:text-sm">Gönderi</span>
@@ -347,6 +363,17 @@ export default function Profile({
               Takip Edilen
             </span>
           </button>
+        </div>
+
+        {/* Discord-Style IB Course Roles Badges with Emirgan Quick Edit */}
+        <div className="w-full max-w-xl flex justify-center mb-4">
+          <RoleBadges
+            roles={userProfile.roles}
+            showEditButton={isEmirgan}
+            onEditClick={() => setShowRolesModal(true)}
+            size="md"
+            className="justify-center"
+          />
         </div>
 
         {/* Admin IP & Security Information (Only visible to 'emirgan') */}
@@ -838,6 +865,20 @@ export default function Profile({
             </div>
           </div>
         </div>
+      )}
+      {/* Emirgan IB Course Roles Editor Modal */}
+      {showRolesModal && userProfile && (
+        <EditRolesModal
+          isOpen={showRolesModal}
+          onClose={() => setShowRolesModal(false)}
+          userId={userProfile.id}
+          username={userProfile.username}
+          currentRoles={userProfile.roles}
+          socket={socket}
+          onRolesUpdated={(newRoles) => {
+            setUserProfile((prev: any) => prev ? { ...prev, roles: newRoles } : prev);
+          }}
+        />
       )}
     </div>
   );

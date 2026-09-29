@@ -5,9 +5,11 @@ import {
   RefreshCw, Megaphone, Search, Clock, 
   Unlock, Crown, AlertTriangle, Eye, UserX,
   Radio, HardDrive, Terminal, X, Check, Edit3, 
-  ShieldAlert, Ban, UserCheck, ShieldCheck, Gamepad2
+  ShieldAlert, Ban, UserCheck, ShieldCheck, Gamepad2, Tag
 } from "lucide-react";
 import { getApiUrl } from "../utils/api";
+import RoleBadges from "./RoleBadges";
+import EditRolesModal from "./EditRolesModal";
 
 interface AdminOverview {
   totalUsers: number;
@@ -42,6 +44,7 @@ interface UserItem {
   signup_ip?: string;
   last_ip?: string;
   isOnline?: boolean;
+  roles?: string[];
 }
 
 interface PendingUserItem {
@@ -106,6 +109,7 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
   const [banReason, setBanReason] = useState<string>("Kural ihlali sebebiyle erişiminiz engellendi.");
 
   const [selectedUserForDelete, setSelectedUserForDelete] = useState<UserItem | null>(null);
+  const [selectedUserForRoles, setSelectedUserForRoles] = useState<UserItem | null>(null);
 
   // Broadcast
   const [broadcastTitle, setBroadcastTitle] = useState<string>("📢 YÖNETİCİ DUYURUSU");
@@ -298,9 +302,19 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
     socket.on("pending_count_updated", handlePendingUpdate);
     socket.on("user:approved", handlePendingUpdate);
     socket.on("user:rejected", handlePendingUpdate);
+    const handleRolesUpdate = (data: any) => {
+      const uid = Number(data?.userId || data?.id);
+      if (uid && data?.roles && Array.isArray(data.roles)) {
+        setUsers((prev) => prev.map((u) => u.id === uid ? { ...u, roles: data.roles } : u));
+      } else {
+        fetchUsers();
+      }
+    };
+
     socket.on("user_banned", handlePendingUpdate);
     socket.on("user_unbanned", handlePendingUpdate);
     socket.on("user_deleted", handlePendingUpdate);
+    socket.on("user:roles_updated", handleRolesUpdate);
     socket.on("active_tables_updated", handleActiveTablesUpdate);
     socket.on("online_users", () => {
       fetchUsers();
@@ -318,6 +332,7 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
       socket.off("user_banned", handlePendingUpdate);
       socket.off("user_unbanned", handlePendingUpdate);
       socket.off("user_deleted", handlePendingUpdate);
+      socket.off("user:roles_updated", handleRolesUpdate);
       socket.off("active_tables_updated", handleActiveTablesUpdate);
       socket.off("online_users");
     };
@@ -945,6 +960,14 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
                                     )}
                                   </div>
                                   <span className="text-[11px] text-slate-500 font-mono">ID: {user.id}</span>
+                                  {/* IB Course Roles Badges */}
+                                  <div className="mt-1">
+                                    <RoleBadges
+                                      roles={user.roles}
+                                      size="sm"
+                                      className="max-w-[260px]"
+                                    />
+                                  </div>
                                 </div>
                               </div>
                             </td>
@@ -987,6 +1010,16 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
 
                             <td className="p-3.5 sm:p-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
+                                {/* Rol Ekle / Düzenle */}
+                                <button
+                                  onClick={() => setSelectedUserForRoles(user)}
+                                  title="IB Ders Rollerini Düzenle"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-700/50 transition-all cursor-pointer text-xs font-bold"
+                                >
+                                  <Tag size={13} />
+                                  <span className="hidden sm:inline">Roller</span>
+                                </button>
+
                                 {/* İsim Değiştir */}
                                 <button
                                   onClick={() => {
@@ -1525,6 +1558,29 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal 4: Emirgan IB Ders Rolleri Düzenleme Modalı */}
+      {selectedUserForRoles && (
+        <EditRolesModal
+          isOpen={Boolean(selectedUserForRoles)}
+          onClose={() => setSelectedUserForRoles(null)}
+          userId={selectedUserForRoles.id}
+          username={selectedUserForRoles.username}
+          currentRoles={selectedUserForRoles.roles}
+          socket={socket}
+          onRolesUpdated={(newRoles) => {
+            setUsers((prev) =>
+              prev.map((u) =>
+                u.id === selectedUserForRoles.id ? { ...u, roles: newRoles } : u
+              )
+            );
+            setSelectedUserForRoles((prev) =>
+              prev ? { ...prev, roles: newRoles } : null
+            );
+            showToast(`"${selectedUserForRoles.username}" kullanıcısının rolleri güncellendi.`, "success");
+          }}
+        />
       )}
     </div>
   );
