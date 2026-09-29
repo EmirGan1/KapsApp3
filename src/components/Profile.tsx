@@ -3,7 +3,7 @@ import { Socket } from "socket.io-client";
 import { 
   Camera, LogOut, Heart, MessageCircle, ArrowLeft, Maximize2, Lock, X, Trash2, 
   UserX, AlertTriangle, Shield, ShieldAlert, Globe, UserPlus, UserMinus, UserCheck, MessageSquare, 
-  Users, Search, Check, Clock 
+  Users, Search, Check, Clock, Moon, Sun
 } from "lucide-react";
 import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
@@ -25,6 +25,8 @@ export default function Profile({
   onAvatarUpdated,
   onUserClick,
   onOpenChat,
+  darkMode,
+  onToggleDarkMode,
 }: {
   socket: Socket | null;
   currentUserId: number;
@@ -36,6 +38,8 @@ export default function Profile({
   onAvatarUpdated: (url: string) => void;
   onUserClick: (id: number) => void;
   onOpenChat?: (userId: number) => void;
+  darkMode?: boolean;
+  onToggleDarkMode?: () => void;
 }) {
   const [uploading, setUploading] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -495,21 +499,32 @@ export default function Profile({
         )}
 
         {isMe && (
-          <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto mb-4">
+          <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-2.5 w-full md:w-auto mb-4">
+            {onToggleDarkMode && (
+              <button
+                type="button"
+                onClick={onToggleDarkMode}
+                className="w-full sm:w-auto px-5 flex items-center justify-center gap-2 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
+                title="Görünüm Temasını Değiştir"
+              >
+                {darkMode ? <Sun size={18} className="text-amber-500" /> : <Moon size={18} className="text-indigo-500" />}
+                <span>{darkMode ? "Açık Temaya Geç" : "Koyu Temaya Geç"}</span>
+              </button>
+            )}
             <button
               onClick={() => {
                 setShowPasswordModal(true);
                 setPasswordSuccess(false);
                 setPasswordError("");
               }}
-              className="px-6 flex items-center justify-center gap-2 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold rounded-xl transition-colors cursor-pointer"
+              className="w-full sm:w-auto px-5 flex items-center justify-center gap-2 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold rounded-xl transition-colors cursor-pointer"
             >
               <Lock size={18} />
               Şifre Değiştir
             </button>
             <button
               onClick={onLogout}
-              className="px-6 flex items-center justify-center gap-2 py-2.5 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 font-semibold rounded-xl transition-colors cursor-pointer"
+              className="w-full sm:w-auto px-5 flex items-center justify-center gap-2 py-2.5 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/40 font-semibold rounded-xl transition-colors cursor-pointer"
             >
               <LogOut size={18} />
               Çıkış Yap
@@ -623,29 +638,29 @@ export default function Profile({
 
       {/* Change Password Modal */}
       {showPasswordModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-xl relative animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex justify-center items-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-3xl p-6 w-full max-w-sm shadow-2xl relative animate-in zoom-in-95 duration-200">
             <button
               onClick={() => setShowPasswordModal(false)}
-              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors cursor-pointer"
             >
               <X size={20} />
             </button>
             <div className="flex justify-center mb-4">
-              <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
+              <div className="w-12 h-12 bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center">
                 <Lock size={24} />
               </div>
             </div>
-            <h2 className="text-xl font-bold text-center text-slate-800 mb-6">Şifre Değiştir</h2>
+            <h2 className="text-xl font-bold text-center text-slate-900 dark:text-slate-100 mb-6">Şifre Değiştir</h2>
             
             {passwordSuccess ? (
-              <div className="text-center p-4 bg-green-50 text-green-700 rounded-xl font-medium">
+              <div className="text-center p-4 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/60 rounded-xl font-medium">
                 Şifreniz başarıyla değiştirildi!
               </div>
             ) : (
               <form onSubmit={handleChangePassword} className="space-y-4">
                 {passwordError && (
-                  <div className="p-3 bg-red-50 text-red-600 text-sm rounded-xl text-center">
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/50 text-sm rounded-xl text-center">
                     {passwordError}
                   </div>
                 )}
@@ -655,7 +670,7 @@ export default function Profile({
                     placeholder="Eski Şifre"
                     value={oldPassword}
                     onChange={(e) => setOldPassword(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-colors"
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white dark:focus:bg-slate-800 transition-colors placeholder-slate-400 dark:placeholder-slate-500"
                   />
                 </div>
                 <div>
@@ -664,12 +679,12 @@ export default function Profile({
                     placeholder="Yeni Şifre"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-colors"
+                    className="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white dark:focus:bg-slate-800 transition-colors placeholder-slate-400 dark:placeholder-slate-500"
                   />
                 </div>
                 <button
                   type="submit"
-                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-500/20 transition-all active:scale-[0.98]"
+                  className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md shadow-blue-500/20 transition-all active:scale-[0.98] cursor-pointer"
                 >
                   Şifreyi Güncelle
                 </button>

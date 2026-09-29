@@ -301,31 +301,17 @@ async function initDb() {
   // 2. Geçmişte takılı kalan veya emirgan dışındaki eski kullanıcıları approved yap:
   try { await client.execute("UPDATE users SET status = 'approved' WHERE status IS NULL OR status = '' OR status = 'pending'"); } catch(e){}
 
-  // 3. IB Ders Rolleri Göçü: Tüm mevcut kullanıcılarda 'titc' ve 'eng_b_hl' zorunlu varsayılan rollerini sağla
+  // 3. IB Ders Rolleri: Yalnızca roles alanı tamamen boş (NULL) olan yeni kullanıcılara başlangıç varsayılanı ver
   try {
-    const allUsersRes = await client.execute("SELECT id, roles FROM users");
+    const allUsersRes = await client.execute("SELECT id, roles FROM users WHERE roles IS NULL OR roles = ''");
     for (const u of allUsersRes.rows) {
-      let currentRoles: string[] = [];
-      if (u.roles) {
-        if (typeof u.roles === "string") {
-          try {
-            const parsed = JSON.parse(u.roles);
-            if (Array.isArray(parsed)) currentRoles = parsed;
-          } catch {}
-        } else if (Array.isArray(u.roles)) {
-          currentRoles = u.roles;
-        }
-      }
-      const updatedRoles = Array.from(new Set([...currentRoles, "titc", "eng_b_hl"]));
-      if (!u.roles || currentRoles.length !== updatedRoles.length) {
-        await client.execute({
-          sql: "UPDATE users SET roles = ? WHERE id = ?",
-          args: [JSON.stringify(updatedRoles), u.id]
-        });
-      }
+      await client.execute({
+        sql: "UPDATE users SET roles = ? WHERE id = ?",
+        args: [JSON.stringify(["titc", "eng_b_hl"]), u.id]
+      });
     }
   } catch(e) {
-    console.error("IB Course roles migration error:", e);
+    console.error("IB Course roles default seed error:", e);
   }
 
   // Announcements (Duyurular) Table
@@ -356,7 +342,7 @@ async function initDb() {
   )`);
   try { await client.execute("ALTER TABLE agenda_events ADD COLUMN target_roles TEXT"); } catch(e){}
 
-  // Roles & Custom Role Creator Table with Discord-style hierarchy
+  // Roles & Custom Roles Table with Discord-style hierarchy
   await client.execute(`CREATE TABLE IF NOT EXISTS roles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key TEXT UNIQUE NOT NULL,
@@ -370,6 +356,15 @@ async function initDb() {
   try { await client.execute("ALTER TABLE roles ADD COLUMN description TEXT"); } catch(e){}
   try { await client.execute("ALTER TABLE roles ADD COLUMN position INTEGER DEFAULT 0"); } catch(e){}
   try { await client.execute("ALTER TABLE roles ADD COLUMN is_custom INTEGER DEFAULT 0"); } catch(e){}
+
+  // Custom Roles table schema (as specified in specification)
+  await client.execute(`CREATE TABLE IF NOT EXISTS custom_roles (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    color VARCHAR(30) NOT NULL,
+    position INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
 
   // Seed default IB roles into roles table
   try {
@@ -3232,6 +3227,14 @@ async function startServer() {
         args: [roleKey, roleName, roleColor, rolePosition, roleDesc, new Date().toISOString()]
       });
 
+      // Also sync into custom_roles table
+      try {
+        await client.execute({
+          sql: "INSERT OR REPLACE INTO custom_roles (id, name, color, position, created_at) VALUES (?, ?, ?, ?, ?)",
+          args: [roleKey, roleName, roleColor, rolePosition, new Date().toISOString()]
+        });
+      } catch(e){}
+
       const newRole = {
         id: roleKey,
         key: roleKey,
@@ -3245,6 +3248,7 @@ async function startServer() {
       };
 
       io.emit("roles:updated");
+      io.emit("roles_updated");
 
       return res.status(201).json({ success: true, role: newRole });
     } catch (err: any) {
@@ -3269,10 +3273,17 @@ async function startServer() {
             sql: "UPDATE roles SET position = ? WHERE key = ? OR id = ?",
             args: [pos, String(roleKey), Number(item.dbId || item.id) || 0]
           });
+          try {
+            await client.execute({
+              sql: "UPDATE custom_roles SET position = ? WHERE id = ?",
+              args: [pos, String(roleKey)]
+            });
+          } catch(e){}
         }
       }
 
       io.emit("roles:updated");
+      io.emit("roles_updated");
 
       return res.json({ success: true, message: "Rol hiyerarşisi ve sıralaması güncellendi." });
     } catch (err: any) {
@@ -3299,7 +3310,20 @@ async function startServer() {
         ]
       });
 
+      try {
+        await client.execute({
+          sql: "UPDATE custom_roles SET name = COALESCE(?, name), color = COALESCE(?, color), position = COALESCE(?, position) WHERE id = ?",
+          args: [
+            name ? String(name).trim() : null,
+            color ? String(color).trim() : null,
+            position !== undefined ? Number(position) : null,
+            String(roleIdOrKey)
+          ]
+        });
+      } catch(e){}
+
       io.emit("roles:updated");
+      io.emit("roles_updated");
 
       return res.json({ success: true, message: "Rol güncellendi." });
     } catch (err: any) {
@@ -3308,7 +3332,7 @@ async function startServer() {
     }
   });
 
-  // Admin: Delete a Custom Role
+  // Admin: Delete a Custom Role (with Cascade Removal from all users)
   app.delete("/api/admin/roles/:id", requireEmirganAdmin, async (req, res) => {
     try {
       const roleIdOrKey = req.params.id;
@@ -3322,14 +3346,52 @@ async function startServer() {
       }
 
       const roleRow = existing.rows[0];
+      const roleKeyToDelete = String(roleRow.key || roleRow.id);
+
       await client.execute({
         sql: "DELETE FROM roles WHERE id = ?",
         args: [roleRow.id]
       });
 
-      io.emit("roles:updated");
+      try {
+        await client.execute({
+          sql: "DELETE FROM custom_roles WHERE id = ?",
+          args: [roleKeyToDelete]
+        });
+      } catch(e){}
 
-      return res.json({ success: true, message: "Rol silindi." });
+      // Cascade remove role from all users in DB
+      try {
+        const allUsers = await client.execute("SELECT id, roles FROM users WHERE roles IS NOT NULL");
+        for (const u of allUsers.rows) {
+          if (u.roles) {
+            let userRoles: string[] = [];
+            try {
+              if (typeof u.roles === "string") {
+                userRoles = JSON.parse(u.roles);
+              } else if (Array.isArray(u.roles)) {
+                userRoles = u.roles as any;
+              }
+            } catch {}
+            if (Array.isArray(userRoles) && userRoles.includes(roleKeyToDelete)) {
+              const filtered = userRoles.filter((r) => r !== roleKeyToDelete);
+              await client.execute({
+                sql: "UPDATE users SET roles = ? WHERE id = ?",
+                args: [JSON.stringify(filtered), u.id]
+              });
+              invalidateUserCache(Number(u.id));
+              io.emit("user:roles_updated", { userId: u.id, roles: filtered });
+            }
+          }
+        }
+      } catch(e) {
+        console.error("Cascade role deletion error:", e);
+      }
+
+      io.emit("roles:updated");
+      io.emit("roles_updated");
+
+      return res.json({ success: true, message: "Özel rol silindi ve tüm kullanıcılardan kaldırıldı." });
     } catch (err: any) {
       console.error("DELETE /api/admin/roles/:id error:", err);
       return res.status(500).json({ error: err.message });

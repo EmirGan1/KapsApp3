@@ -112,6 +112,7 @@ export interface Friend {
   username: string;
   avatar: string | null;
   color?: string;
+  roles?: string[];
   status: 0 | 1; // 0 = pending, 1 = accepted
   is_sender: boolean; // Did current user send the request?
   signup_ip?: string | null;

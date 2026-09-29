@@ -110,16 +110,6 @@ export default function EditRolesModal({
     setSelectedRoles(["titc", "eng_b_hl"]);
   };
 
-  const handleSelectAllSL = () => {
-    const slIds = availableRoles.filter((r) => r.level === "SL" || r.id === "titc").map((r) => r.id);
-    setSelectedRoles(Array.from(new Set(slIds)));
-  };
-
-  const handleSelectAllHL = () => {
-    const hlIds = availableRoles.filter((r) => r.level === "HL" || r.id === "titc").map((r) => r.id);
-    setSelectedRoles(Array.from(new Set(hlIds)));
-  };
-
   const handleClearAll = () => {
     setSelectedRoles([]);
   };
@@ -293,29 +283,17 @@ export default function EditRolesModal({
             </div>
           </div>
 
-          {/* Quick Shortcuts */}
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-[11px] font-semibold text-slate-400 mr-1">Hızlı Seçim:</span>
-            <button
-              type="button"
-              onClick={handleSelectAllSL}
-              className="px-2.5 py-1 rounded-lg bg-orange-500/15 hover:bg-orange-500/25 text-orange-400 border border-orange-500/30 text-[11px] font-semibold transition-colors cursor-pointer"
-            >
-              Tüm SL Dersleri
-            </button>
-            <button
-              type="button"
-              onClick={handleSelectAllHL}
-              className="px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 border border-blue-500/30 text-[11px] font-semibold transition-colors cursor-pointer"
-            >
-              Tüm HL Dersleri
-            </button>
+          {/* Action Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-1.5 text-xs">
+            <span className="text-[11px] font-semibold text-slate-400">
+              Dersleri tek tek tıklayarak ekleyin veya kaldırın:
+            </span>
             <button
               type="button"
               onClick={handleClearAll}
               className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 text-[11px] font-semibold transition-colors cursor-pointer ml-auto"
             >
-              Temizle
+              Tümünü Temizle
             </button>
           </div>
 

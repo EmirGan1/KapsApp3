@@ -761,6 +761,35 @@ export default function App() {
         }}
       />
 
+      {/* Mobile Top Header with Dark Mode Toggle & Quick Controls */}
+      <div className="md:hidden flex items-center justify-between px-3.5 py-2.5 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 shrink-0 z-20 transition-colors duration-200">
+        <div className="flex items-center gap-2">
+          <span className="text-xl font-black text-blue-600 dark:text-blue-500 tracking-tight">KapsApp</span>
+          {isEmirgan && (
+            <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/20 rounded-md text-[9px] font-bold">
+              ROOT
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {/* Mobile Direct Dark Mode Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setDarkMode(!darkMode)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200/60 dark:border-slate-700 transition-all cursor-pointer shadow-xs active:scale-95"
+            title={darkMode ? "Açık Temaya Geç" : "Koyu Temaya Geç"}
+          >
+            {darkMode ? (
+              <Sun size={17} className="text-amber-500" />
+            ) : (
+              <Moon size={17} className="text-indigo-500" />
+            )}
+            <span className="text-xs font-bold">{darkMode ? "Açık" : "Koyu"}</span>
+          </button>
+        </div>
+      </div>
+
       {/* Desktop Sidebar */}
       <div className="hidden md:flex w-24 lg:w-64 flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-colors duration-200">
         <div className="p-6 flex items-center justify-between">
@@ -920,7 +949,18 @@ export default function App() {
             onBackToFolders={() => handleTabChange('folders')}
           />
         )}
-        {activeTab === 'friends' && <Friends socket={socket} currentUsername={username} onlineUsers={onlineUsers} onUserClick={handleUserClick} />}
+        {activeTab === 'friends' && (
+          <Friends 
+            socket={socket} 
+            currentUsername={username} 
+            onlineUsers={onlineUsers} 
+            onUserClick={handleUserClick} 
+            onOpenChat={(targetId) => {
+              setTargetChatUserId(targetId);
+              setActiveTab('chats');
+            }}
+          />
+        )}
         {activeTab === 'notifications' && <Notifications socket={socket} onNotificationClick={handleNotificationClick} />}
         {activeTab === 'profile' && (
           <Profile 
@@ -937,6 +977,8 @@ export default function App() {
               setTargetChatUserId(targetId);
               setActiveTab('chats');
             }}
+            darkMode={darkMode}
+            onToggleDarkMode={() => setDarkMode(!darkMode)}
           />
         )}
         

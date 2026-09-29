@@ -12,6 +12,7 @@ import { getApiUrl } from "../utils/api";
 import { COURSE_ROLES, CourseRole, sortRolesByPosition } from "../types";
 import RoleBadges from "./RoleBadges";
 import EditRolesModal from "./EditRolesModal";
+import CreateRoleModal from "./CreateRoleModal";
 
 interface AdminOverview {
   totalUsers: number;
@@ -111,6 +112,7 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
   const [editRolePosition, setEditRolePosition] = useState<number>(0);
   const [editRoleDescription, setEditRoleDescription] = useState<string>("");
   const [roleActionLoading, setRoleActionLoading] = useState<boolean>(false);
+  const [isCreateRoleModalOpen, setIsCreateRoleModalOpen] = useState<boolean>(false);
   
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -1119,6 +1121,14 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
                     {f === "all" ? "Tümü" : f === "online" ? "🟢 Çevrim İçi" : f === "banned" ? "Banlı" : "Yöneticiler"}
                   </button>
                 ))}
+
+                <button
+                  onClick={() => setIsCreateRoleModalOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all cursor-pointer whitespace-nowrap shrink-0 ml-1"
+                >
+                  <Plus size={14} />
+                  <span>Yeni Rol Oluştur</span>
+                </button>
               </div>
             </div>
 
@@ -1319,11 +1329,18 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
 
                 <div className="flex items-center gap-2">
                   <button
+                    onClick={() => setIsCreateRoleModalOpen(true)}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white text-xs font-black shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <Plus size={14} />
+                    <span>+ Yeni Rol Oluştur</span>
+                  </button>
+                  <button
                     onClick={fetchRoles}
                     className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 border border-slate-700 flex items-center gap-2 shrink-0 cursor-pointer"
                   >
                     <RefreshCw size={13} className={roleActionLoading ? "animate-spin" : ""} />
-                    <span>Rolleri Yenile</span>
+                    <span>Yenile</span>
                   </button>
                 </div>
               </div>
@@ -2276,6 +2293,17 @@ export default function AdminPanel({ socket, currentUsername, onUserClick, onPen
           </div>
         </div>
       )}
+      {/* Modal 6: Discord Tarzı Özel Rol Oluşturucu Modalı */}
+      <CreateRoleModal
+        isOpen={isCreateRoleModalOpen}
+        onClose={() => setIsCreateRoleModalOpen(false)}
+        existingRoles={rolesList}
+        socket={socket}
+        onRoleCreated={(newRole) => {
+          fetchRoles();
+          showToast(`"${newRole.name || newRole.label}" özel rolü başarıyla oluşturuldu!`, "success");
+        }}
+      />
     </div>
   );
 }

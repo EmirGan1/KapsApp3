@@ -1094,12 +1094,12 @@ export default function Chats({
                 }
                 return (
                   <div key={`typing-${id}`} className="flex justify-start">
-                    <div className="bg-white border border-slate-200 text-slate-500 rounded-2xl rounded-bl-none shadow-sm p-3 flex items-center gap-2 text-xs font-medium">
+                    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-2xl rounded-bl-none shadow-sm p-3 flex items-center gap-2 text-xs font-medium">
                        <span>{name} yazıyor</span>
                        <div className="flex gap-1 ml-1">
-                         <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                         <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                         <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                         <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                         <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                         <span className="w-1.5 h-1.5 bg-slate-400 dark:bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                        </div>
                     </div>
                   </div>
@@ -1169,33 +1169,33 @@ export default function Chats({
       
       {/* Create Group Modal */}
       {showCreateGroup && (
-        <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden flex flex-col max-h-[80vh]">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="font-bold text-lg text-slate-800">Yeni Grup Oluştur</h3>
-              <button onClick={() => setShowCreateGroup(false)} className="text-slate-400 hover:text-slate-600 p-1">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-sm overflow-hidden flex flex-col max-h-[80vh] shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <h3 className="font-bold text-lg text-slate-900 dark:text-slate-100">Yeni Grup Oluştur</h3>
+              <button onClick={() => setShowCreateGroup(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer">
                 <X size={20} />
               </button>
             </div>
             
-            <div className="p-4 border-b border-slate-100">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800">
               <input 
                 type="text" 
                 placeholder="Grup Adı" 
                 value={newGroupName}
                 onChange={e => setNewGroupName(e.target.value)}
-                className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-slate-400 dark:placeholder-slate-500 text-sm"
               />
             </div>
             
             <div className="p-4 flex-1 overflow-y-auto">
-              <h4 className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wider">Üye Seçimi</h4>
+              <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-3 uppercase tracking-wider">Üye Seçimi</h4>
               <div className="space-y-2">
                 {friends.length === 0 ? (
-                  <p className="text-sm text-slate-500">Grup kuracak arkadaşınız yok.</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-4">Grup kuracak arkadaşınız yok.</p>
                 ) : (
                   friends.map(f => (
-                    <label key={f.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50 cursor-pointer">
+                    <label key={f.id} className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer transition-colors">
                       <input 
                         type="checkbox" 
                         checked={selectedFriends.includes(f.id)}
@@ -1203,21 +1203,21 @@ export default function Chats({
                           if (e.target.checked) setSelectedFriends([...selectedFriends, f.id]);
                           else setSelectedFriends(selectedFriends.filter(id => id !== f.id));
                         }}
-                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500 cursor-pointer"
                       />
                       <Avatar url={f.avatar} name={f.username} color={f.color} size={8} />
-                      <span className="text-sm font-medium text-slate-700">{f.username}</span>
+                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">{f.username}</span>
                     </label>
                   ))
                 )}
               </div>
             </div>
             
-            <div className="p-4 border-t border-slate-100 bg-slate-50">
+            <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
               <button 
                 onClick={handleCreateGroup}
                 disabled={!newGroupName.trim() || selectedFriends.length === 0}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-semibold transition-colors shadow-sm"
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-bold transition-all shadow-md shadow-blue-500/20 active:scale-98 cursor-pointer"
               >
                 Grubu Oluştur ({selectedFriends.length} Kişi)
               </button>

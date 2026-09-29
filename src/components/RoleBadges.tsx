@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { COURSE_ROLES, CourseRole, sortRolesByPosition } from "../types";
 import { ShieldCheck, Plus, Sparkles, Tag } from "lucide-react";
+import { getApiUrl } from "../utils/api";
 
 interface RoleBadgesProps {
   roles?: string[] | null;
@@ -12,20 +13,60 @@ interface RoleBadgesProps {
   emptyText?: string;
 }
 
+let cachedGlobalRoles: CourseRole[] = COURSE_ROLES;
+
 export default function RoleBadges({
   roles,
-  allRoles = COURSE_ROLES,
+  allRoles,
   showEditButton = false,
   onEditClick,
   size = "md",
   className = "",
   emptyText = "Henüz rol atanmadı"
 }: RoleBadgesProps) {
+  const [activeRoleDefs, setActiveRoleDefs] = useState<CourseRole[]>(allRoles || cachedGlobalRoles);
+
+  useEffect(() => {
+    if (allRoles && allRoles.length > 0) {
+      setActiveRoleDefs(allRoles);
+      cachedGlobalRoles = allRoles;
+      return;
+    }
+
+    // If no explicit allRoles passed, fetch from backend roles registry
+    fetch(getApiUrl("/api/roles"))
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && Array.isArray(data.roles) && data.roles.length > 0) {
+          const merged: CourseRole[] = data.roles.map((r: any) => {
+            const staticMatch = COURSE_ROLES.find(
+              (cr) => cr.id.toLowerCase() === (r.key || r.id).toLowerCase()
+            );
+            return {
+              id: r.key || r.id,
+              key: r.key || r.id,
+              label: r.name || r.label,
+              name: r.name || r.label,
+              color: r.color || "#6366F1",
+              position: Number(r.position) || 0,
+              isCustom: Boolean(r.isCustom),
+              description: r.description || staticMatch?.description,
+              subjectGroup: staticMatch?.subjectGroup || (r.isCustom ? "custom" : undefined),
+              level: staticMatch?.level
+            };
+          });
+          cachedGlobalRoles = merged;
+          setActiveRoleDefs(merged);
+        }
+      })
+      .catch(() => {});
+  }, [allRoles]);
+
   // If roles is explicitly provided as array (including empty array []), respect it.
   const roleIds = Array.isArray(roles) ? roles : [];
 
   // Sort active roles by position descending (Discord-style hierarchy)
-  const activeRoles: CourseRole[] = sortRolesByPosition(roleIds, allRoles);
+  const activeRoles: CourseRole[] = sortRolesByPosition(roleIds, activeRoleDefs);
 
   const sizeStyles = {
     sm: {
@@ -55,7 +96,7 @@ export default function RoleBadges({
             borderColor: `${role.color}4D`,     // 30% opacity
           }}
           className={`inline-flex items-center rounded-lg border transition-all duration-150 select-none shadow-2xs hover:scale-105 ${sizeStyles.pill}`}
-          title={role.description || `${role.label} Rolü (Pozisyon: ${role.position || 0})`}
+          title={role.description || `${role.label || role.name} Rolü (Hiyerarşi Sırası: ${role.position || 0})`}
         >
           {/* Discord-style Glowing Role Circle Dot */}
           <span
