@@ -40,12 +40,12 @@ export default function App() {
   const [currentUserRoles, setCurrentUserRoles] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem("lan_user_roles");
-      if (stored) {
+      if (stored !== null) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
-    return ["titc", "eng_b_hl"];
+    return [];
   });
   
   const [socket, setSocket] = useState<Socket | null>(null);

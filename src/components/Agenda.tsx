@@ -51,17 +51,17 @@ export default function Agenda({
 
   // Effective roles for current user
   const effectiveRoles = useMemo(() => {
-    if (Array.isArray(currentUserRoles) && currentUserRoles.length > 0) {
+    if (Array.isArray(currentUserRoles)) {
       return currentUserRoles;
     }
     try {
       const stored = localStorage.getItem("lan_user_roles");
-      if (stored) {
+      if (stored !== null) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
-    return ["titc", "eng_b_hl"];
+    return [];
   }, [currentUserRoles]);
 
   const [currentDate, setCurrentDate] = useState(() => new Date());

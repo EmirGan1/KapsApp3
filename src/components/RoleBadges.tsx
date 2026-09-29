@@ -22,7 +22,7 @@ export default function RoleBadges({
   onEditClick,
   size = "md",
   className = "",
-  emptyText = "Henüz rol atanmadı"
+  emptyText = ""
 }: RoleBadgesProps) {
   const [activeRoleDefs, setActiveRoleDefs] = useState<CourseRole[]>(allRoles || cachedGlobalRoles);
 
@@ -113,8 +113,8 @@ export default function RoleBadges({
         </div>
       ))}
 
-      {activeRoles.length === 0 && (
-        <span className="text-xs text-slate-400 italic">{emptyText}</span>
+      {activeRoles.length === 0 && Boolean(emptyText) && (
+        <span className="text-xs text-slate-400 dark:text-slate-500 italic">{emptyText}</span>
       )}
 
       {/* Emirgan / Admin Role Edit Button */}

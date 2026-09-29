@@ -124,12 +124,15 @@ export default function Profile({
 
     const onRolesUpdated = (data: any) => {
       const targetId = Number(data?.userId || data?.id);
-      if (targetId === viewingUserId || targetId === currentUserId) {
-        if (data?.roles && Array.isArray(data.roles)) {
-          setUserProfile((prev: any) => prev ? { ...prev, roles: data.roles } : prev);
-        } else {
-          loadProfile();
+      if (Array.isArray(data?.roles)) {
+        if (targetId === currentUserId) {
+          localStorage.setItem("lan_user_roles", JSON.stringify(data.roles));
         }
+        if (targetId === viewingUserId || targetId === currentUserId) {
+          setUserProfile((prev: any) => prev ? { ...prev, roles: data.roles } : prev);
+        }
+      } else if (targetId === viewingUserId || targetId === currentUserId) {
+        loadProfile();
       }
     };
     socket.on("user:roles_updated", onRolesUpdated);
@@ -377,6 +380,7 @@ export default function Profile({
             onEditClick={() => setShowRolesModal(true)}
             size="md"
             className="justify-center"
+            emptyText={isEmirgan ? "Henüz rol atanmadı" : ""}
           />
         </div>
 

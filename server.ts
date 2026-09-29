@@ -5508,10 +5508,7 @@ async function startServer() {
           return;
         }
 
-        let newRoles = Array.from(new Set(data.roles.map((r: any) => String(r).trim())));
-        if (!newRoles.includes("titc")) newRoles.unshift("titc");
-        if (!newRoles.includes("eng_b_hl")) newRoles.push("eng_b_hl");
-
+        const newRoles = Array.from(new Set(data.roles.map((r: any) => String(r).trim()).filter(Boolean)));
         const rolesJson = JSON.stringify(newRoles);
         await client.execute({
           sql: "UPDATE users SET roles = ? WHERE id = ?",
