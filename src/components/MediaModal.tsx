@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, Heart, Send, Download, MessageCircle, Calendar, Film, Image as ImageIcon, ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { X, Heart, Send, Download, MessageCircle, Calendar, Film, Image as ImageIcon, ZoomIn, ZoomOut, RotateCcw, ChevronLeft, ChevronRight, FileText, Layers } from "lucide-react";
 import Avatar from "./Avatar";
 import { MediaModalData } from "../types";
 
@@ -12,24 +12,53 @@ interface MediaModalProps {
 export default function MediaModal({ data, onClose, onUserClick }: MediaModalProps) {
   const [commentText, setCommentText] = useState("");
   const [zoomScale, setZoomScale] = useState(1);
+  const [currentIndex, setCurrentIndex] = useState(data?.initialIndex || 0);
+
+  const items = (data?.items && data.items.length > 0)
+    ? data.items
+    : data
+    ? [{ url: data.url, type: data.type, name: data.fileName }]
+    : [];
+
+  useEffect(() => {
+    if (data?.initialIndex !== undefined) {
+      setCurrentIndex(data.initialIndex);
+    } else {
+      setCurrentIndex(0);
+    }
+  }, [data]);
+
+  const currentItem = items[currentIndex] || items[0] || (data ? { url: data.url, type: data.type } : null);
 
   useEffect(() => {
     setZoomScale(1);
-  }, [data?.url]);
+  }, [currentItem?.url]);
 
   const handleZoomIn = () => setZoomScale((s) => Math.min(s + 0.35, 3.5));
   const handleZoomOut = () => setZoomScale((s) => Math.max(s - 0.35, 0.6));
   const handleResetZoom = () => setZoomScale(1);
 
+  const handlePrevItem = () => {
+    if (items.length <= 1) return;
+    setCurrentIndex((prev) => (prev > 0 ? prev - 1 : items.length - 1));
+  };
+
+  const handleNextItem = () => {
+    if (items.length <= 1) return;
+    setCurrentIndex((prev) => (prev < items.length - 1 ? prev + 1 : 0));
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
+      if (e.key === "ArrowLeft") handlePrevItem();
+      if (e.key === "ArrowRight") handleNextItem();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, items.length]);
 
-  if (!data) return null;
+  if (!data || !currentItem) return null;
 
   const handleAddComment = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,19 +98,43 @@ export default function MediaModal({ data, onClose, onUserClick }: MediaModalPro
         
         {/* Media Section (Left/Center) */}
         <div className="flex-1 bg-black flex items-center justify-center relative overflow-hidden min-h-[45vh] md:min-h-0">
-          {data.type === "video" ? (
+          {currentItem.type === "video" ? (
             <video
-              src={data.url}
+              key={currentItem.url}
+              src={currentItem.url}
               controls
               autoPlay
               playsInline
               className="max-h-full max-w-full object-contain"
             />
+          ) : currentItem.type === "file" ? (
+            <div className="flex flex-col items-center justify-center p-6 text-center text-white max-w-md">
+              <div className="w-20 h-20 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center mb-4 text-blue-400">
+                <FileText size={44} />
+              </div>
+              <h4 className="font-bold text-lg text-white truncate max-w-full mb-1">
+                {currentItem.name || "Ders Dosyası"}
+              </h4>
+              <p className="text-xs text-slate-400 mb-6">
+                Belge / Doküman Dosyası
+              </p>
+              <a
+                href={currentItem.url}
+                download={currentItem.name || `kapsapp-${Date.now()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg transition-all active:scale-95"
+              >
+                <Download size={16} />
+                <span>Dosyayı İndir</span>
+              </a>
+            </div>
           ) : (
             <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
               <img
-                src={data.url}
-                alt={data.caption || "Medya"}
+                key={currentItem.url}
+                src={currentItem.url}
+                alt={data.caption || currentItem.name || "Medya"}
                 referrerPolicy="no-referrer"
                 style={{
                   transform: `scale(${zoomScale})`,
@@ -93,14 +146,41 @@ export default function MediaModal({ data, onClose, onUserClick }: MediaModalPro
             </div>
           )}
 
-          {/* Media type badge */}
-          <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm text-white/90 text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 pointer-events-none">
-            {data.type === "video" ? <Film size={13} /> : <ImageIcon size={13} />}
-            <span className="capitalize">{data.type === "video" ? "Video" : "Fotoğraf"}</span>
+          {/* Media type & counter badge */}
+          <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-sm text-white/90 text-xs px-2.5 py-1 rounded-full flex items-center gap-1.5 pointer-events-none border border-white/10">
+            {currentItem.type === "video" ? <Film size={13} /> : currentItem.type === "file" ? <FileText size={13} /> : <ImageIcon size={13} />}
+            <span className="capitalize">{currentItem.type === "video" ? "Video" : currentItem.type === "file" ? "Dosya" : "Fotoğraf"}</span>
+            {items.length > 1 && (
+              <span className="ml-1 text-slate-400">
+                ({currentIndex + 1} / {items.length})
+              </span>
+            )}
           </div>
 
+          {/* Left / Right Carousel Navigation for Modal */}
+          {items.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={handlePrevItem}
+                className="absolute left-3 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center backdrop-blur-md shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20"
+                title="Önceki (Sol Ok)"
+              >
+                <ChevronLeft size={24} />
+              </button>
+              <button
+                type="button"
+                onClick={handleNextItem}
+                className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-11 h-11 rounded-full bg-black/60 hover:bg-black/90 text-white flex items-center justify-center backdrop-blur-md shadow-xl transition-all active:scale-95 cursor-pointer border border-white/20"
+                title="Sonraki (Sağ Ok)"
+              >
+                <ChevronRight size={24} />
+              </button>
+            </>
+          )}
+
           {/* Zoom controls for photos */}
-          {data.type !== "video" && (
+          {currentItem.type === "image" && (
             <div className="absolute bottom-3 left-3 bg-black/60 hover:bg-black/80 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full flex items-center gap-1 transition-colors">
               <button
                 type="button"
@@ -133,11 +213,11 @@ export default function MediaModal({ data, onClose, onUserClick }: MediaModalPro
 
           {/* Quick download button on media */}
           <a
-            href={data.url}
-            download={data.fileName || `kapsapp-${Date.now()}`}
+            href={currentItem.url}
+            download={currentItem.name || `kapsapp-${Date.now()}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="absolute bottom-3 right-3 bg-black/60 hover:bg-black/80 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="absolute bottom-3 right-3 bg-black/60 hover:bg-black/80 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-colors cursor-pointer border border-white/10"
             title="İndir"
           >
             <Download size={14} />

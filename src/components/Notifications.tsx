@@ -99,8 +99,8 @@ export default function Notifications({
         stackMap.set(groupKey, {
           key: groupKey,
           type: notif.type,
-          sender_id: notif.sender_id,
-          target_id: notif.target_id,
+          sender_id: notif.sender_id ?? undefined,
+          target_id: notif.target_id ?? undefined,
           count: 1,
           unreadCount: notif.read ? 0 : 1,
           items: [notif],

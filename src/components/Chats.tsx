@@ -267,8 +267,8 @@ export default function Chats({
     };
 
     const onMessageDeleted = (data: any) => {
-      const deletedId = String(data?.message_id || data?.id || data?.messageId || data);
-      setMessages(prev => prev.filter(m => String(m.id) !== deletedId));
+      const deletedId = String(data?.message_id || data?.id || data?._id || data?.messageId || data);
+      setMessages(prev => prev.filter(m => String(m.id) !== deletedId && String((m as any)._id) !== deletedId));
     };
 
     const onTyping = (data: any) => {
@@ -616,9 +616,11 @@ export default function Chats({
     }
   };
 
-  const handleDeleteMessage = (messageId: number) => {
+  const handleDeleteMessage = (messageId: number | string) => {
+    console.log('Silinen ID (Chat):', messageId);
+    if (!messageId && messageId !== 0) return;
     const idStr = String(messageId);
-    setMessages(prev => prev.filter(m => String(m.id) !== idStr));
+    setMessages(prev => prev.filter(m => String(m.id) !== idStr && String((m as any)._id) !== idStr));
     
     if (socket) {
       socket.emit("delete_message", { 
@@ -647,7 +649,7 @@ export default function Chats({
       fetch(getApiUrl(`/api/messages/${messageId}`), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` }
-      }).catch(() => {});
+      }).catch((err) => console.error("REST delete_message error:", err));
     }
   };
 

@@ -125,9 +125,9 @@ export default function GlobalChat({
     };
     
     const onMessageDeleted = (data: any) => {
-      const deletedId = String(data?.message_id || data?.id || data?.messageId || data);
+      const deletedId = String(data?.message_id || data?.id || data?._id || data?.messageId || data);
       removeFromGlobalCache(deletedId);
-      setMessages((prev) => prev.filter(m => String(m.id) !== deletedId));
+      setMessages((prev) => prev.filter(m => String(m.id) !== deletedId && String((m as any)._id) !== deletedId));
     };
 
     const onCleared = () => {
@@ -434,11 +434,13 @@ export default function GlobalChat({
     });
   };
 
-  const handleDeleteMessage = (messageId: number) => {
+  const handleDeleteMessage = (messageId: number | string) => {
+    console.log('Silinen ID (Global):', messageId);
+    if (!messageId && messageId !== 0) return;
     if (window.confirm("Bu mesajı silmek istediğinize emin misiniz?")) {
       const idStr = String(messageId);
       removeFromGlobalCache(idStr);
-      setMessages((prev) => prev.filter((m) => String(m.id) !== idStr));
+      setMessages((prev) => prev.filter((m) => String(m.id) !== idStr && String((m as any)._id) !== idStr));
       if (socket) {
         socket.emit("delete_message", { message_id: messageId, id: messageId, type: "global" }, (res: any) => {
           if (res?.error) {
@@ -446,6 +448,13 @@ export default function GlobalChat({
             socket.emit("get_global_messages", setMessages);
           }
         });
+      }
+      const token = localStorage.getItem("lan_token") || localStorage.getItem("token");
+      if (token) {
+        fetch(getApiUrl(`/api/messages/${messageId}`), {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` }
+        }).catch((err) => console.error("REST delete_message error:", err));
       }
     }
   };

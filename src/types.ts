@@ -125,6 +125,8 @@ export interface UserProfileData {
 export interface MediaModalData {
   url: string;
   type: 'image' | 'video' | 'file';
+  items?: { url: string; type: 'image' | 'video' | 'file'; name?: string; size?: number }[];
+  initialIndex?: number;
   authorName?: string;
   authorAvatar?: string | null;
   authorColor?: string;

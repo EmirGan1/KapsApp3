@@ -80,7 +80,26 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ 
   storage,
-  limits: { fileSize: 250 * 1024 * 1024 } // 250 MB limit for videos, photos and files
+  limits: { fileSize: 300 * 1024 * 1024 }, // 300MB limit for videos, high-res photos and documents
+  fileFilter: (req, file, cb) => {
+    // video/mp4, video/quicktime, video/webm, image/*, audio/*, pdf, documents, zip
+    if (
+      file.mimetype.startsWith('image/') || 
+      file.mimetype.startsWith('video/') ||
+      file.mimetype.startsWith('audio/') ||
+      file.mimetype === 'application/pdf' ||
+      file.mimetype.includes('officedocument') ||
+      file.mimetype.includes('word') ||
+      file.mimetype.includes('presentation') ||
+      file.mimetype.includes('spreadsheet') ||
+      file.mimetype.includes('zip') ||
+      /\.(jpg|jpeg|png|gif|webp|svg|mp4|webm|mov|mkv|avi|mp3|ogg|wav|pdf|docx?|pptx?|xlsx?|zip)$/i.test(file.originalname)
+    ) {
+      cb(null, true);
+    } else {
+      cb(null, false);
+    }
+  }
 });
 
 // Helper to safely delete uploaded media from disk and Turso cloud database
@@ -399,7 +418,7 @@ async function startServer() {
   }
   
   const app = express();
-  const PORT = Number(process.env.PORT) || 5000;
+  const PORT = Number(process.env.PORT) || 3000;
   
   // Production Performance & Security Headers
   app.disable("x-powered-by");
@@ -520,8 +539,118 @@ async function startServer() {
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-Hardware-Fingerprint", "X-Device-Id"]
   }));
 
-  app.use(express.json({ limit: "250mb" }));
-  app.use(express.urlencoded({ extended: true, limit: "250mb" }));
+  app.use(express.json({ limit: "300mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "300mb" }));
+
+  // Helper to determine accurate content-type for media streaming
+  const getMediaType = (filename: string, fallbackMime?: string): string => {
+    const ext = path.extname(filename).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.mp4': 'video/mp4',
+      '.webm': 'video/webm',
+      '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
+      '.avi': 'video/x-msvideo',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.svg': 'image/svg+xml',
+      '.mp3': 'audio/mpeg',
+      '.wav': 'audio/wav',
+      '.ogg': 'audio/ogg',
+      '.pdf': 'application/pdf',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      '.zip': 'application/zip'
+    };
+    return mimeMap[ext] || fallbackMime || 'application/octet-stream';
+  };
+
+  // Video & Media Stream Handler with HTTP 206 (Partial Content / Accept-Ranges) Support
+  const handleMediaStream = async (req: express.Request, res: express.Response) => {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(uploadsDir, filename);
+
+    // If file is not yet on disk, attempt restoration from Turso cloud database
+    if (!fs.existsSync(filePath)) {
+      try {
+        const fileRes = await client.execute({
+          sql: "SELECT original_name, mimetype, data FROM uploaded_files WHERE filename = ?",
+          args: [filename]
+        });
+        if (fileRes.rows.length > 0) {
+          const row = fileRes.rows[0];
+          const buffer = Buffer.from(row.data as string, "base64");
+          try {
+            fs.writeFileSync(filePath, buffer);
+          } catch (e) {
+            console.error("Cache write error:", e);
+            if (row.mimetype) res.setHeader("Content-Type", row.mimetype as string);
+            return res.send(buffer);
+          }
+        } else {
+          return res.status(404).send("File not found");
+        }
+      } catch (err) {
+        console.error("Error restoring file from cloud DB:", err);
+        return res.status(500).send("Internal Server Error");
+      }
+    }
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send("File not found");
+    }
+
+    try {
+      const stat = fs.statSync(filePath);
+      const fileSize = stat.size;
+      const contentType = getMediaType(filename);
+      const range = req.headers.range;
+
+      res.setHeader("Cache-Control", "public, max-age=604800, etag");
+
+      if (range) {
+        // HTTP 206 Partial Content (Range Request for smooth video playback & seeking)
+        const parts = range.replace(/bytes=/, "").split("-");
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+        if (isNaN(start) || start >= fileSize || end >= fileSize || start > end) {
+          res.status(416).set("Content-Range", `bytes */${fileSize}`).end();
+          return;
+        }
+
+        const chunksize = (end - start) + 1;
+        const fileStream = fs.createReadStream(filePath, { start, end });
+
+        res.writeHead(206, {
+          "Content-Range": `bytes ${start}-${end}/${fileSize}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": chunksize,
+          "Content-Type": contentType,
+        });
+
+        fileStream.pipe(res);
+      } else {
+        // Full content stream with Accept-Ranges declared
+        res.writeHead(200, {
+          "Accept-Ranges": "bytes",
+          "Content-Length": fileSize,
+          "Content-Type": contentType,
+        });
+        fs.createReadStream(filePath).pipe(res);
+      }
+    } catch (err) {
+      console.error("Error streaming media file:", err);
+      return res.status(500).send("Error streaming file");
+    }
+  };
+
+  // Register on /uploads/:filename, /api/media/:filename and /api/video/:filename
+  app.get(["/uploads/:filename", "/api/media/:filename", "/api/video/:filename"], handleMediaStream);
 
   // Global Gateway Ban Interceptor (Physical Hardware / Fingerprint Ban ONLY - NEVER CHECKS IP)
   app.use((req, res, next) => {
@@ -581,47 +710,7 @@ async function startServer() {
     }
   };
 
-  // Explicit /uploads/:filename serving with Turso cloud fallback and 7-day browser caching
-  app.get("/uploads/:filename", async (req, res) => {
-    const filename = path.basename(req.params.filename);
-    const filePath = path.join(uploadsDir, filename);
 
-    res.setHeader("Cache-Control", "public, max-age=604800, etag");
-
-    if (fs.existsSync(filePath)) {
-      return res.sendFile(filePath, { maxAge: "7d" });
-    }
-
-    try {
-      const fileRes = await client.execute({
-        sql: "SELECT original_name, mimetype, data FROM uploaded_files WHERE filename = ?",
-        args: [filename]
-      });
-      if (fileRes.rows.length > 0) {
-        const row = fileRes.rows[0];
-        const buffer = Buffer.from(row.data as string, "base64");
-        try {
-          fs.writeFileSync(filePath, buffer);
-          // Now that it's on disk, use sendFile to support range requests and proper headers
-          return res.sendFile(filePath);
-        } catch (e) {
-          console.error("Cache write error:", e);
-          if (row.mimetype) {
-            res.setHeader("Content-Type", row.mimetype as string);
-          }
-          return res.send(buffer);
-        }
-      } else {
-        return res.status(404).send("File not found");
-      }
-    } catch (err) {
-      console.error("Error restoring file from cloud DB:", err);
-      return res.status(500).send("Internal Server Error");
-    }
-
-    // Never fall through to Vite SPA index.html for uploads!
-    return res.status(404).send("File not found");
-  });
 
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
@@ -1186,12 +1275,12 @@ async function startServer() {
       let postsRes;
       if (beforeId && !isNaN(beforeId)) {
         postsRes = await client.execute({
-          sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) AND id < ? ORDER BY id DESC LIMIT ?",
+          sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) AND id < ? ORDER BY id DESC LIMIT ?",
           args: [folderName, folderName, beforeId, limit]
         });
       } else {
         postsRes = await client.execute({
-          sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) ORDER BY id DESC LIMIT ?",
+          sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) ORDER BY id DESC LIMIT ?",
           args: [folderName, folderName, limit]
         });
       }
@@ -1247,24 +1336,24 @@ async function startServer() {
       if (subjectFilter && subjectFilter !== "null" && subjectFilter !== "undefined") {
         if (beforeId && !isNaN(beforeId)) {
           postsRes = await client.execute({
-            sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) AND id < ? ORDER BY id DESC LIMIT ?",
+            sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) AND id < ? ORDER BY id DESC LIMIT ?",
             args: [subjectFilter, subjectFilter, beforeId, limit]
           });
         } else {
           postsRes = await client.execute({
-            sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) ORDER BY id DESC LIMIT ?",
+            sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) ORDER BY id DESC LIMIT ?",
             args: [subjectFilter, subjectFilter, limit]
           });
         }
       } else {
         if (beforeId && !isNaN(beforeId)) {
           postsRes = await client.execute({
-            sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') AND id < ? ORDER BY id DESC LIMIT ?",
+            sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') AND id < ? ORDER BY id DESC LIMIT ?",
             args: [beforeId, limit]
           });
         } else {
           postsRes = await client.execute({
-            sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') ORDER BY id DESC LIMIT ?",
+            sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') ORDER BY id DESC LIMIT ?",
             args: [limit]
           });
         }
@@ -1341,10 +1430,16 @@ async function startServer() {
       }
       if (!mediaType) mediaType = "image";
 
+      const rawAttachments = typeof req.body.attachments === "string" 
+        ? req.body.attachments 
+        : req.body.attachments 
+        ? JSON.stringify(req.body.attachments) 
+        : null;
+
       const createdAt = new Date().toISOString();
       const insertRes = await client.execute({
-        sql: "INSERT INTO posts (user_id, image, caption, media_type, subject, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        args: [userId, rawImage, rawCaption, mediaType, rawSubject, createdAt]
+        sql: "INSERT INTO posts (user_id, image, caption, media_type, subject, attachments, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        args: [userId, rawImage, rawCaption, mediaType, rawSubject, rawAttachments, createdAt]
       });
 
       const newPostId = Number(insertRes.lastInsertRowid);
@@ -1355,6 +1450,7 @@ async function startServer() {
         caption: rawCaption,
         media_type: mediaType,
         subject: rawSubject,
+        attachments: rawAttachments,
         created_at: createdAt,
         username: authUser.username,
         avatar: authUser.avatar,
@@ -1376,41 +1472,45 @@ async function startServer() {
     try {
       const token = req.headers.authorization?.replace("Bearer ", "");
       if (!token) return res.status(401).json({ error: "Giriş yapmalısınız." });
-      const userRes = await client.execute({ sql: "SELECT id, username, is_admin FROM users WHERE token = ?", args: [token] });
+      const userRes = await client.execute({ sql: "SELECT id, username, is_admin, role FROM users WHERE token = ?", args: [token] });
       if (userRes.rows.length === 0) return res.status(401).json({ error: "Geçersiz oturum." });
       const authUser = userRes.rows[0];
 
-      const rawPostId = req.params.id;
-      const numPostId = Number(rawPostId);
-      const postId = !isNaN(numPostId) ? numPostId : rawPostId;
+      const targetId = req.params.id;
+      if (!targetId || targetId === "undefined" || targetId === "null") {
+        return res.status(400).json({ error: "Geçersiz veya eksik gönderi ID'si." });
+      }
+      const numPostId = Number(targetId);
+      const isNum = !isNaN(numPostId);
 
       const postRes = await client.execute({
-        sql: "SELECT id, user_id, image FROM posts WHERE id = ? OR id = ?",
-        args: [postId, String(rawPostId)]
+        sql: "SELECT * FROM posts WHERE id = ? OR id = ?",
+        args: [isNum ? numPostId : targetId, String(targetId)]
       });
       if (postRes.rows.length === 0) {
         return res.status(404).json({ error: "Gönderi bulunamadı." });
       }
 
-      const post = postRes.rows[0];
-      const isEmirgan = authUser.username && (authUser.username as string).trim().toLowerCase() === 'emirgan';
-      const isAdmin = isEmirgan || authUser.is_admin === 1 || (authUser as any).role === 'admin';
+      const item = postRes.rows[0];
+      const itemUserId = item.user_id !== undefined ? item.user_id : (item as any).userId;
+      const usernameStr = authUser.username ? String(authUser.username).trim().toLowerCase() : "";
+      const isSuperAdmin = usernameStr === "emirgan" || authUser.is_admin === 1 || (authUser as any).role === "admin";
 
-      if (Number(post.user_id) !== Number(authUser.id) && !isAdmin) {
-        return res.status(403).json({ error: "Yetkisiz işlem: Sadece kendi gönderilerinizi veya yönetici silebilir." });
+      if (Number(itemUserId) !== Number(authUser.id) && !isSuperAdmin) {
+        return res.status(403).json({ error: "Silme yetkiniz yok." });
       }
 
       // 1. Delete physical photo and multi-attachments from disk and database
-      const postImage = (post.image || (post as any).image_url) as string | null;
+      const postImage = (item.image || (item as any).image_url) as string | null;
       if (postImage) {
         await deleteUploadedFile(postImage).catch(() => {});
       }
-      if ((post as any).attachments) {
+      if ((item as any).attachments) {
         try {
-          const atts = typeof (post as any).attachments === 'string' ? JSON.parse((post as any).attachments) : (post as any).attachments;
+          const atts = typeof (item as any).attachments === 'string' ? JSON.parse((item as any).attachments) : (item as any).attachments;
           if (Array.isArray(atts)) {
-            for (const item of atts) {
-              const url = typeof item === 'string' ? item : item?.url;
+            for (const att of atts) {
+              const url = typeof att === 'string' ? att : att?.url;
               if (url) await deleteUploadedFile(url).catch(() => {});
             }
           }
@@ -1418,14 +1518,14 @@ async function startServer() {
       }
 
       // 2. Delete from database (posts, likes, comments)
-      await client.execute({ sql: "DELETE FROM posts WHERE id = ? OR id = ?", args: [postId, String(rawPostId)] });
-      await client.execute({ sql: "DELETE FROM likes WHERE post_id = ? OR post_id = ?", args: [postId, String(rawPostId)] });
-      await client.execute({ sql: "DELETE FROM comments WHERE post_id = ? OR post_id = ?", args: [postId, String(rawPostId)] });
+      await client.execute({ sql: "DELETE FROM posts WHERE id = ? OR id = ?", args: [isNum ? numPostId : targetId, String(targetId)] });
+      await client.execute({ sql: "DELETE FROM likes WHERE post_id = ? OR post_id = ?", args: [isNum ? numPostId : targetId, String(targetId)] });
+      await client.execute({ sql: "DELETE FROM comments WHERE post_id = ? OR post_id = ?", args: [isNum ? numPostId : targetId, String(targetId)] });
 
-      const resolvedId = Number(post.id || postId);
-      io.emit("post_deleted", { postId: resolvedId, id: resolvedId });
+      const resolvedId = isNum ? numPostId : targetId;
+      io.emit("post_deleted", { postId: resolvedId, id: resolvedId, _id: resolvedId });
       io.emit("feed_updated");
-      return res.json({ success: true, postId: resolvedId });
+      return res.json({ success: true, postId: resolvedId, id: resolvedId, _id: resolvedId });
     } catch (err: any) {
       console.error("DELETE /api/posts/:id error:", err);
       res.status(500).json({ error: err.message || "Gönderi silinirken hata oluştu." });
@@ -1491,46 +1591,59 @@ async function startServer() {
     try {
       const token = req.headers.authorization?.replace("Bearer ", "");
       if (!token) return res.status(401).json({ error: "Unauthorized" });
-      const userRes = await client.execute({ sql: "SELECT id, username, is_admin FROM users WHERE token = ?", args: [token] });
+      const userRes = await client.execute({ sql: "SELECT id, username, is_admin, role FROM users WHERE token = ?", args: [token] });
       if (userRes.rows.length === 0) return res.status(401).json({ error: "Unauthorized" });
       const authUser = userRes.rows[0];
       
-      const rawId = req.params.id;
-      const numId = Number(rawId);
-      const messageId = !isNaN(numId) ? numId : rawId;
+      const targetId = req.params.id;
+      if (!targetId || targetId === "undefined" || targetId === "null") {
+        return res.status(400).json({ error: "Geçersiz veya eksik mesaj ID'si." });
+      }
+      const numId = Number(targetId);
+      const isNum = !isNaN(numId);
       
       const usernameStr = authUser.username ? String(authUser.username).trim().toLowerCase() : "";
-      const isEmirgan = usernameStr === "emirgan" || authUser.is_admin === 1 || (authUser as any).role === "admin";
+      const isSuperAdmin = usernameStr === "emirgan" || authUser.is_admin === 1 || (authUser as any).role === "admin";
       
       for (const tbl of ["messages", "global_messages", "group_messages"]) {
         try {
           const msgRes = await client.execute({ 
             sql: `SELECT * FROM ${tbl} WHERE id = ? OR id = ?`, 
-            args: [!isNaN(numId) ? numId : rawId, String(rawId)] 
+            args: [isNum ? numId : targetId, String(targetId)] 
           });
           if (msgRes.rows.length > 0) {
-            const foundMsg = msgRes.rows[0];
-            const senderId = Number(foundMsg.sender);
-            const receiverId = Number((foundMsg as any).receiver);
+            const item = msgRes.rows[0];
+            const senderId = Number(item.sender !== undefined ? item.sender : (item as any).userId || (item as any).user_id);
+            const receiverId = Number((item as any).receiver);
             
-            if (senderId !== Number(authUser.id) && receiverId !== Number(authUser.id) && !isEmirgan) {
-              return res.status(403).json({ error: "Bu mesajı silme yetkiniz yok." });
+            if (senderId !== Number(authUser.id) && receiverId !== Number(authUser.id) && !isSuperAdmin) {
+              return res.status(403).json({ error: "Silme yetkiniz yok." });
             }
             await client.execute({ 
               sql: `DELETE FROM ${tbl} WHERE id = ? OR id = ?`, 
-              args: [!isNaN(numId) ? numId : rawId, String(rawId)] 
+              args: [isNum ? numId : targetId, String(targetId)] 
             });
+
+            // Clean up uploaded media
+            if (item.content && typeof item.content === 'string' && item.content.startsWith('/uploads/')) {
+              deleteUploadedFile(item.content).catch(() => {});
+            }
+            if ((item as any).image_url && typeof (item as any).image_url === 'string' && (item as any).image_url.startsWith('/uploads/')) {
+              deleteUploadedFile((item as any).image_url).catch(() => {});
+            }
             
+            const messageId = isNum ? numId : targetId;
             const payload = { 
               message_id: messageId, 
               id: messageId, 
+              _id: messageId,
               messageId: messageId,
-              group_id: (foundMsg as any).group_id,
-              receiver: (foundMsg as any).receiver
+              group_id: (item as any).group_id,
+              receiver: (item as any).receiver
             };
             io.emit("message_deleted", payload);
             io.emit("message:deleted", payload);
-            return res.json({ success: true, message_id: messageId, messageId: messageId });
+            return res.json({ success: true, message_id: messageId, messageId: messageId, id: messageId, _id: messageId });
           }
         } catch (e) {
           console.error(`Error querying ${tbl} for deletion:`, e);
@@ -1538,7 +1651,7 @@ async function startServer() {
       }
       return res.status(404).json({ error: "Mesaj bulunamadı." });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err.message || "Mesaj silinemedi." });
     }
   });
 
@@ -4548,6 +4661,9 @@ async function startServer() {
     sender_color?: string;
     reply_message?: any;
     room_id?: string;
+    status?: string;
+    is_read?: number;
+    read_at?: string;
   }
 
   class MessageRamCache {
@@ -4976,7 +5092,7 @@ async function startServer() {
 
     socket.on("get_user_posts", async (targetId, cb) => {
       try {
-        const postsRes = await client.execute({ sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", args: [targetId] });
+        const postsRes = await client.execute({ sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", args: [targetId] });
         const postIds = postsRes.rows.map((p: any) => p.id);
         
         let likesRes: any = { rows: [] };
@@ -5000,6 +5116,7 @@ async function startServer() {
           return { 
             ...p, 
             media_type,
+            attachments: p.attachments || null,
             username: pUser?.username, 
             user_avatar: pUser?.avatar, 
             user_color: pUser?.color, 
@@ -5040,24 +5157,24 @@ async function startServer() {
         if (subjectFilter && subjectFilter !== "null" && subjectFilter !== "undefined") {
           if (beforeId && !isNaN(beforeId)) {
             postsRes = await client.execute({
-              sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) AND id < ? ORDER BY id DESC LIMIT ?",
+              sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) AND id < ? ORDER BY id DESC LIMIT ?",
               args: [subjectFilter, subjectFilter, beforeId, limit]
             });
           } else {
             postsRes = await client.execute({
-              sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) ORDER BY id DESC LIMIT ?",
+              sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (LOWER(subject) = LOWER(?) OR subject = ?) ORDER BY id DESC LIMIT ?",
               args: [subjectFilter, subjectFilter, limit]
             });
           }
         } else {
           if (beforeId && !isNaN(beforeId)) {
             postsRes = await client.execute({
-              sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') AND id < ? ORDER BY id DESC LIMIT ?",
+              sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') AND id < ? ORDER BY id DESC LIMIT ?",
               args: [beforeId, limit]
             });
           } else {
             postsRes = await client.execute({
-              sql: "SELECT id, user_id, image, caption, media_type, subject, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') ORDER BY id DESC LIMIT ?",
+              sql: "SELECT id, user_id, image, caption, media_type, subject, attachments, created_at FROM posts WHERE (subject IS NULL OR subject = '' OR subject = 'null') ORDER BY id DESC LIMIT ?",
               args: [limit]
             });
           }
@@ -5079,6 +5196,7 @@ async function startServer() {
           return { 
             ...p, 
             media_type,
+            attachments: p.attachments || null,
             username: pUser?.username || "Kullanıcı", 
             avatar: pUser?.avatar || null, 
             color: pUser?.color || null, 
@@ -5121,10 +5239,16 @@ async function startServer() {
         }
         if (!mediaType) mediaType = "image";
 
+        const rawAttachments = typeof data.attachments === "string" 
+          ? data.attachments 
+          : data.attachments 
+          ? JSON.stringify(data.attachments) 
+          : null;
+
         const createdAt = new Date().toISOString();
         const insertRes = await client.execute({
-          sql: "INSERT INTO posts (user_id, image, caption, media_type, subject, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-          args: [userId, rawImage, rawCaption, mediaType, rawSubject, createdAt]
+          sql: "INSERT INTO posts (user_id, image, caption, media_type, subject, attachments, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          args: [userId, rawImage, rawCaption, mediaType, rawSubject, rawAttachments, createdAt]
         });
 
         const newPostId = Number(insertRes.lastInsertRowid);
@@ -5136,6 +5260,7 @@ async function startServer() {
           caption: rawCaption,
           media_type: mediaType,
           subject: rawSubject,
+          attachments: rawAttachments,
           created_at: createdAt,
           username: pUser?.username || user?.username || "Kullanıcı",
           avatar: pUser?.avatar || user?.avatar || null,
@@ -5187,7 +5312,7 @@ async function startServer() {
         const numId = Number(raw);
         const postId = !isNaN(numId) ? numId : raw;
         const postRes = await client.execute({
-          sql: "SELECT id, user_id, image FROM posts WHERE id = ? OR id = ?",
+          sql: "SELECT * FROM posts WHERE id = ? OR id = ?",
           args: [postId, String(raw)]
         });
         if (postRes.rows.length === 0) {
@@ -5195,29 +5320,42 @@ async function startServer() {
           return;
         }
 
-        const isEmirgan = user.username && user.username.trim().toLowerCase() === 'emirgan';
+        const post = postRes.rows[0];
+        const usernameStr = user.username ? String(user.username).trim().toLowerCase() : "";
+        const isEmirgan = usernameStr === "emirgan";
         const isAdmin = isEmirgan || user.is_admin === 1 || (user as any).role === 'admin';
-        const postOwnerId = Number(postRes.rows[0].user_id);
+        const postOwnerId = Number(post.user_id !== undefined ? post.user_id : (post as any).userId);
         const currentUserId = Number(user.id);
 
         if (postOwnerId !== currentUserId && !isAdmin) {
-          if (cb) cb({ error: "Yetkisiz işlem: Sadece kendi gönderinizi silebilirsiniz." });
+          if (cb) cb({ error: "Silme yetkiniz yok." });
           return;
         }
 
-        const postImage = postRes.rows[0].image as string | null;
+        const postImage = (post.image || (post as any).image_url) as string | null;
         if (postImage) {
           await deleteUploadedFile(postImage).catch(() => {});
+        }
+        if ((post as any).attachments) {
+          try {
+            const atts = typeof (post as any).attachments === 'string' ? JSON.parse((post as any).attachments) : (post as any).attachments;
+            if (Array.isArray(atts)) {
+              for (const att of atts) {
+                const url = typeof att === 'string' ? att : att?.url;
+                if (url) await deleteUploadedFile(url).catch(() => {});
+              }
+            }
+          } catch (e) {}
         }
 
         await client.execute({ sql: "DELETE FROM posts WHERE id = ? OR id = ?", args: [postId, String(raw)] });
         await client.execute({ sql: "DELETE FROM likes WHERE post_id = ? OR post_id = ?", args: [postId, String(raw)] });
         await client.execute({ sql: "DELETE FROM comments WHERE post_id = ? OR post_id = ?", args: [postId, String(raw)] });
         
-        const resolvedId = Number(postRes.rows[0].id || postId);
-        io.emit("post_deleted", { postId: resolvedId, id: resolvedId });
+        const resolvedId = !isNaN(numId) ? numId : (post.id || raw);
+        io.emit("post_deleted", { postId: resolvedId, id: resolvedId, _id: resolvedId });
         io.emit("feed_updated");
-        if (cb) cb({ success: true, postId: resolvedId });
+        if (cb) cb({ success: true, postId: resolvedId, id: resolvedId, _id: resolvedId });
       } catch (err) {
         console.error("delete_post socket error:", err);
         if (cb) cb({ error: "Silme işlemi sırasında hata oluştu." });
@@ -6885,6 +7023,7 @@ async function startServer() {
         
         const payload = { 
           id: messageId,
+          _id: messageId,
           message_id: messageId, 
           messageId: messageId,
           type: resolvedType, 
@@ -6897,7 +7036,7 @@ async function startServer() {
         io.emit("message_deleted", payload);
         io.emit("message:deleted", payload);
 
-        if (cb) cb({ success: true, id: messageId, message_id: messageId, messageId: messageId });
+        if (cb) cb({ success: true, id: messageId, _id: messageId, message_id: messageId, messageId: messageId });
       } catch (err) {
         console.error("Delete message error:", err);
         if (cb) cb({ error: "Silme işlemi sırasında hata oluştu." });

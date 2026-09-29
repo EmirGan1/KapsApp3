@@ -26,6 +26,7 @@ import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
 import AdminModerationMenu from "./AdminModerationMenu";
 import PostMediaFrame from "./PostMediaFrame";
+import MultiMediaPostViewer, { extractPostMediaItems } from "./MultiMediaPostViewer";
 import CourseFilesManager from "./CourseFilesManager";
 import { getApiUrl } from "../utils/api";
 import { compressImage } from "../utils/imageCompressor";
@@ -64,6 +65,7 @@ export default function Feed({
   const [newPostCaption, setNewPostCaption] = useState("");
   const [selectedMediaList, setSelectedMediaList] = useState<SelectedMediaItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const [activeCommentsPostId, setActiveCommentsPostId] = useState<number | null>(null);
   const [comments, setComments] = useState<any[]>([]);
@@ -122,10 +124,8 @@ export default function Feed({
       socket.on("new_post", onNewPost);
       
       const onPostDeleted = (data: any) => {
-        const deletedId = Number(data?.postId || data?.id || data);
-        if (!isNaN(deletedId)) {
-          setPosts((prev) => prev.filter((p) => Number(p.id) !== deletedId));
-        }
+        const deletedId = String(data?.postId || data?.id || data?._id || data);
+        setPosts((prev) => prev.filter((p) => String(p.id) !== deletedId && String((p as any)._id) !== deletedId));
       };
       socket.on("post_deleted", onPostDeleted);
       socket.on("post:deleted", onPostDeleted);
@@ -289,6 +289,11 @@ export default function Feed({
     const newItems: SelectedMediaItem[] = [];
 
     for (const file of fileList) {
+      if (file.size > 300 * 1024 * 1024) {
+        alert(`${file.name} dosya boyutu 300MB sınırını aşıyor.`);
+        continue;
+      }
+
       if (file.type.startsWith("video/")) {
         newItems.push({
           file,
@@ -335,18 +340,51 @@ export default function Feed({
     if (isSubmitting) return;
 
     setIsSubmitting(true);
+    setUploadProgress(selectedMediaList.length > 0 ? 0 : null);
     let uploadedAttachments: any[] = [];
     let firstMediaUrl: string | null = null;
     let firstMediaType: "image" | "video" = "image";
+
+    // XMLHttpRequest helper to track upload progress in real-time
+    const uploadWithProgress = (url: string, formData: FormData): Promise<any> => {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url);
+        const token = localStorage.getItem("lan_token") || localStorage.getItem("token");
+        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            setUploadProgress(percent);
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              resolve(JSON.parse(xhr.responseText));
+            } catch {
+              resolve(xhr.responseText);
+            }
+          } else {
+            try {
+              const err = JSON.parse(xhr.responseText);
+              reject(new Error(err.error || `Yükleme hatası (${xhr.status})`));
+            } catch {
+              reject(new Error(`Yükleme hatası (${xhr.status})`));
+            }
+          }
+        };
+        xhr.onerror = () => reject(new Error("Ağ hatası veya dosya yüklenemedi."));
+        xhr.send(formData);
+      });
+    };
 
     if (selectedMediaList.length > 0) {
       try {
         if (selectedMediaList.length === 1) {
           const formData = new FormData();
           formData.append("file", selectedMediaList[0].file);
-          const res = await fetch(getApiUrl("/api/upload"), { method: "POST", body: formData });
-          if (!res.ok) throw new Error("Dosya yüklenemedi.");
-          const data = await res.json();
+          const data = await uploadWithProgress(getApiUrl("/api/upload"), formData);
           firstMediaUrl = data.url;
           firstMediaType = data.media_type === "video" ? "video" : "image";
           uploadedAttachments = [{
@@ -360,9 +398,7 @@ export default function Feed({
           selectedMediaList.forEach((item) => {
             formData.append("files", item.file);
           });
-          const res = await fetch(getApiUrl("/api/upload-multiple"), { method: "POST", body: formData });
-          if (!res.ok) throw new Error("Çoklu dosya yüklenemedi.");
-          const data = await res.json();
+          const data = await uploadWithProgress(getApiUrl("/api/upload-multiple"), formData);
           if (data.files && Array.isArray(data.files)) {
             uploadedAttachments = data.files;
             firstMediaUrl = data.files[0]?.url || null;
@@ -373,6 +409,7 @@ export default function Feed({
         console.error("Media upload error:", err);
         alert(err.message || "Dosyalar yüklenirken bir hata oluştu.");
         setIsSubmitting(false);
+        setUploadProgress(null);
         return;
       }
     }
@@ -408,9 +445,11 @@ export default function Feed({
       setNewPostCaption("");
       setSelectedMediaList([]);
       setIsSubmitting(false);
-      if (createdPost && createdPost.id) {
+      setUploadProgress(null);
+      if (createdPost && (createdPost.id || createdPost._id)) {
         setPosts((prev) => {
-          if (prev.some((p) => p.id === createdPost.id)) return prev;
+          const id = createdPost.id || createdPost._id;
+          if (prev.some((p) => p.id === id || (p as any)._id === id)) return prev;
           return [createdPost, ...prev];
         });
       }
@@ -433,12 +472,14 @@ export default function Feed({
             if (!restRes.ok || restData.error) {
               alert(restData.error || res.error || "Gönderi paylaşılamadı.");
               setIsSubmitting(false);
+              setUploadProgress(null);
               return;
             }
             onSuccess(restData.post);
           } catch (e: any) {
             alert(res.error || e.message || "Gönderi paylaşılamadı.");
             setIsSubmitting(false);
+            setUploadProgress(null);
           }
         } else {
           onSuccess(res?.post);
@@ -458,12 +499,14 @@ export default function Feed({
         if (!restRes.ok || restData.error) {
           alert(restData.error || "Gönderi paylaşılamadı.");
           setIsSubmitting(false);
+          setUploadProgress(null);
           return;
         }
         onSuccess(restData.post);
       } catch (err: any) {
         alert(err.message || "Gönderi paylaşılamadı. Lütfen bağlantınızı kontrol edin.");
         setIsSubmitting(false);
+        setUploadProgress(null);
       }
     }
   };
@@ -495,9 +538,14 @@ export default function Feed({
     socket?.emit("like_post", postId);
   };
 
-  const handleDeletePost = async (postId: number) => {
-    setPosts((prev) => prev.filter((p) => p.id !== postId));
-    if (activeModalData?.postId === postId) {
+  const handleDeletePost = async (postId: number | string) => {
+    console.log('Silinen Gönderi ID:', postId);
+    if (!postId && postId !== 0) return;
+    const targetId = String(postId);
+
+    // Anında ekrandan kaldır (id ve _id eşleşmesiyle)
+    setPosts((prev) => prev.filter((p) => String(p.id) !== targetId && String((p as any)._id) !== targetId));
+    if (activeModalData && (String(activeModalData.postId) === targetId || String((activeModalData as any)._id) === targetId)) {
       setActiveModalData(null);
     }
 
@@ -599,11 +647,15 @@ export default function Feed({
     }
   };
 
-  const openPostModal = (post: Post) => {
+  const openPostModal = (post: Post, initialIndex = 0) => {
     setActiveCommentsPostId(post.id);
+    const mediaItems = extractPostMediaItems(post);
+    const activeItem = mediaItems[initialIndex] || mediaItems[0];
     setActiveModalData({
-      url: post.image!,
-      type: post.media_type || "image",
+      url: activeItem?.url || post.image || "",
+      type: activeItem?.type || post.media_type || "image",
+      items: mediaItems,
+      initialIndex,
       postId: post.id,
       authorName: post.username,
       authorAvatar: post.avatar,
@@ -614,6 +666,7 @@ export default function Feed({
       likesCount: post.likes_count,
       isLiked: post.is_liked,
       comments: comments,
+      fileName: activeItem?.name,
       onLike: () => handleLike(post.id),
       onAddComment: async (content: string) => {
         const trimmed = content.trim();
@@ -854,6 +907,27 @@ export default function Feed({
               </div>
             )}
 
+            {/* Real-time Upload Progress Indicator */}
+            {uploadProgress !== null && (
+              <div className="mb-3 px-1">
+                <div className="flex items-center justify-between text-xs font-semibold text-blue-600 dark:text-blue-400 mb-1.5">
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 size={13} className="animate-spin text-blue-500" />
+                    Medya yükleniyor (video / fotoğraf)...
+                  </span>
+                  <span className="font-mono bg-blue-100 dark:bg-blue-900/50 px-2 py-0.5 rounded text-[11px]">
+                    %{uploadProgress}
+                  </span>
+                </div>
+                <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-200 dark:border-slate-700 shadow-inner">
+                  <div
+                    className="bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500 h-full transition-all duration-200 ease-out rounded-full"
+                    style={{ width: `${Math.max(uploadProgress, 5)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-3">
               <div className="flex items-center gap-1">
                 <label className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-3 py-2 rounded-full cursor-pointer transition-colors flex items-center gap-2 text-sm font-medium">
@@ -1016,17 +1090,11 @@ export default function Feed({
                   </p>
                 )}
 
-                {/* PostMediaFrame: Aspect-Fit uncropped image/video with ambient blur backdrop */}
-                {post.image && (
-                  <div className="px-2 sm:px-4 pb-3">
-                    <PostMediaFrame
-                      src={post.image}
-                      mediaType={post.media_type || "image"}
-                      alt={post.caption || "Gönderi medyası"}
-                      onClick={() => openPostModal(post)}
-                    />
-                  </div>
-                )}
+                {/* MultiMediaPostViewer: Displays single or multiple (up to 50) photos, videos, and files */}
+                <MultiMediaPostViewer
+                  post={post}
+                  onOpenModal={(p, idx) => openPostModal(p, idx)}
+                />
 
                 {/* Action Bar */}
                 <div className="px-4 py-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between transition-colors duration-200">
@@ -1058,9 +1126,9 @@ export default function Feed({
                     </button>
                   </div>
 
-                  {post.image && (
+                  {(post.image || (post.attachments && post.attachments.length > 0)) && (
                     <button
-                      onClick={() => openPostModal(post)}
+                      onClick={() => openPostModal(post, 0)}
                       className="text-xs text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 cursor-pointer transition-colors"
                     >
                       <Maximize2 size={14} />

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import Avatar from "./Avatar";
 import MediaModal from "./MediaModal";
+import MultiMediaPostViewer, { extractPostMediaItems } from "./MultiMediaPostViewer";
 import AdminModerationMenu from "./AdminModerationMenu";
 import { MediaModalData } from "../types";
 import { getApiUrl } from "../utils/api";
@@ -201,11 +202,15 @@ export default function Profile({
     socket?.emit("like_post", postId);
   };
 
-  const openPostModal = (post: any) => {
-    if (!post.image) return;
+  const openPostModal = (post: any, initialIndex = 0) => {
+    const mediaItems = extractPostMediaItems(post);
+    const activeItem = mediaItems[initialIndex] || mediaItems[0];
+    if (!activeItem && !post.image) return;
     setActiveModalData({
-      url: post.image,
-      type: post.media_type === "video" ? "video" : "image",
+      url: activeItem?.url || post.image || "",
+      type: activeItem?.type || (post.media_type === "video" ? "video" : "image"),
+      items: mediaItems,
+      initialIndex,
       authorName: userProfile.username,
       authorAvatar: userProfile.avatar,
       authorColor: userProfile.color,
@@ -216,6 +221,7 @@ export default function Profile({
       likesCount: post.likes_count,
       isLiked: post.is_liked,
       comments: post.comments || [],
+      fileName: activeItem?.name,
       onLike: () => handleLike(post.id),
       onAddComment: (text: string) => {
         socket?.emit("add_comment", { postId: post.id, content: text });
@@ -223,18 +229,21 @@ export default function Profile({
     });
   };
 
-  const handleDeletePost = async (postId: number) => {
+  const handleDeletePost = async (postId: number | string) => {
+    console.log('Silinen Gönderi ID (Profil):', postId);
+    if (!postId && postId !== 0) return;
     if (window.confirm("Bu gönderiyi silmek istediğinize emin misiniz?")) {
-      setUserPosts((prev) => prev.filter((p) => p.id !== postId));
+      const idStr = String(postId);
+      setUserPosts((prev) => prev.filter((p) => String(p.id) !== idStr && String((p as any)._id) !== idStr));
       if (socket) {
-        socket.emit("delete_post", postId, (res: any) => {
+        socket.emit("delete_post", { postId, id: postId }, (res: any) => {
           if (res?.error) {
             alert(res.error);
             socket.emit("get_user_posts", viewingUserId, (posts: any[]) => setUserPosts(posts));
           }
         });
       }
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("lan_token") || localStorage.getItem("token");
       if (token) {
         try {
           await fetch(getApiUrl(`/api/posts/${postId}`), {
@@ -531,37 +540,11 @@ export default function Profile({
                 <p className="px-4 pb-3 text-slate-800 dark:text-slate-200 text-[15px] leading-relaxed whitespace-pre-wrap">{post.caption}</p>
               )}
 
-              {post.image && (
-                <div
-                  className="relative group bg-slate-900 cursor-pointer overflow-hidden"
-                  onClick={() => openPostModal(post)}
-                >
-                  {post.media_type === "video" ? (
-                    <video
-                      src={post.image}
-                      autoPlay
-                      muted
-                      loop
-                      playsInline
-                      className="w-full max-h-[500px] object-contain bg-black pointer-events-none"
-                    />
-                  ) : (
-                    <img
-                      src={post.image}
-                      alt={post.caption || "Gönderi"}
-                      referrerPolicy="no-referrer"
-                      className="w-full max-h-[500px] object-cover bg-slate-50 hover:opacity-95 transition-opacity"
-                    />
-                  )}
-                  <div
-                    className="absolute top-3 right-3 bg-black/60 hover:bg-black/80 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm flex items-center gap-1 cursor-pointer"
-                    title="Büyüt ve Bilgileri Gör"
-                  >
-                    <Maximize2 size={16} />
-                    {post.media_type === "video" && <span className="text-xs pr-1 font-medium">Sesli İzle</span>}
-                  </div>
-                </div>
-              )}
+              {/* Multi-Media Post Viewer (Single or Multiple Photos, Videos, Files) */}
+              <MultiMediaPostViewer
+                post={post}
+                onOpenModal={(p, idx) => openPostModal(p, idx)}
+              />
 
               <div className="px-4 py-3 border-t border-slate-50 dark:border-slate-800 flex items-center justify-between transition-colors duration-200">
                 <div className="flex items-center gap-6">
@@ -587,9 +570,9 @@ export default function Profile({
                   </div>
                 </div>
 
-                {post.image && (
+                {(post.image || (post.attachments && post.attachments.length > 0)) && (
                   <button
-                    onClick={() => openPostModal(post)}
+                    onClick={() => openPostModal(post, 0)}
                     className="text-xs text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1 cursor-pointer transition-colors"
                   >
                     <Maximize2 size={14} />
